@@ -13,6 +13,7 @@ type DataTableProps<T extends { id: string }> = {
   records: T[]
   onRowClick?: (record: T) => void
   getRowLabel?: (record: T) => string
+  getRowClassName?: (record: T) => string | undefined
 }
 
 export function DataTable<T extends { id: string }>({
@@ -20,6 +21,7 @@ export function DataTable<T extends { id: string }>({
   records,
   onRowClick,
   getRowLabel,
+  getRowClassName,
 }: DataTableProps<T>) {
   const handleKeyDown = (event: KeyboardEvent<HTMLTableRowElement>, record: T) => {
     if (!onRowClick) {
@@ -48,7 +50,9 @@ export function DataTable<T extends { id: string }>({
           {records.map((record) => (
             <tr
               key={record.id}
-              className={onRowClick ? 'data-table__row--clickable' : undefined}
+              className={[onRowClick ? 'data-table__row--clickable' : '', getRowClassName?.(record) ?? '']
+                .filter(Boolean)
+                .join(' ')}
               role={onRowClick ? 'button' : undefined}
               tabIndex={onRowClick ? 0 : undefined}
               aria-label={getRowLabel?.(record)}

@@ -2,10 +2,11 @@ import type { PerformanceData } from '../types/performance'
 
 export type SearchResult = {
   id: string
-  type: 'site_visit' | 'task'
+  type: 'site_visit' | 'task' | 'booking' | 'quote'
   title: string
   subtitle: string
   status: string
+  siteVisitId?: string | null
 }
 
 const includesQuery = (value: string | null | undefined, query: string) =>
@@ -42,7 +43,30 @@ export function searchPerformanceData(data: PerformanceData, rawQuery: string): 
       title: task.title,
       subtitle: task.task_type,
       status: task.status,
+      siteVisitId: task.site_visit_id,
     }))
 
-  return [...siteVisitResults, ...taskResults]
+  const bookingResults = data.bookings
+    .filter((booking) => includesQuery(booking.booking_number, query) || includesQuery(booking.customer_full_name, query))
+    .map((booking) => ({
+      id: booking.id,
+      type: 'booking' as const,
+      title: `${booking.booking_number} - ${booking.customer_full_name}`,
+      subtitle: booking.booking_source === 'Manual' ? 'Manual Booking' : 'Quote Booking',
+      status: booking.verification_status,
+      siteVisitId: booking.site_visit_id,
+    }))
+
+  const quoteResults = data.quotes
+    .filter((quote) => includesQuery(quote.quote_reference, query) || includesQuery(quote.customer_full_name, query))
+    .map((quote) => ({
+      id: quote.id,
+      type: 'quote' as const,
+      title: `${quote.quote_reference} - ${quote.customer_full_name}`,
+      subtitle: quote.quote_value ? `Quote value ${quote.quote_value}` : 'Quote',
+      status: quote.status,
+      siteVisitId: quote.site_visit_id,
+    }))
+
+  return [...siteVisitResults, ...taskResults, ...bookingResults, ...quoteResults]
 }

@@ -12,9 +12,10 @@ type MobileRecordCardProps = {
   status?: string
   fields: MobileRecordField[]
   onClick?: () => void
+  isHighlighted?: boolean
 }
 
-export function MobileRecordCard({ title, subtitle, status, fields, onClick }: MobileRecordCardProps) {
+export function MobileRecordCard({ title, subtitle, status, fields, onClick, isHighlighted = false }: MobileRecordCardProps) {
   const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (!onClick) {
       return
@@ -28,7 +29,13 @@ export function MobileRecordCard({ title, subtitle, status, fields, onClick }: M
 
   return (
     <article
-      className={onClick ? 'mobile-record mobile-record--clickable' : 'mobile-record'}
+      className={[
+        'mobile-record',
+        onClick ? 'mobile-record--clickable' : '',
+        isHighlighted ? 'is-highlighted' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
       role={onClick ? 'button' : undefined}
       tabIndex={onClick ? 0 : undefined}
       onClick={onClick}

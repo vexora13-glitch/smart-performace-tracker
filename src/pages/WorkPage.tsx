@@ -6,18 +6,65 @@ import { MobileRecordCard } from '../components/MobileRecordCard'
 import { SiteVisitDetailPanel } from '../components/SiteVisitDetailPanel'
 import { SiteVisitForm } from '../components/SiteVisitForm'
 import { StatusPill } from '../components/StatusPill'
-import type { NewSiteVisitInput, PerformanceData, SiteVisit } from '../types/performance'
+import type {
+  NewQuoteInput,
+  NewSiteVisitInput,
+  NewTaskInput,
+  PerformanceData,
+  Quote,
+  QuoteBookingInput,
+  QuoteStatus,
+  SiteVisit,
+  SiteVisitStatus,
+  Task,
+  TaskStatus,
+} from '../types/performance'
 import { formatCurrency, formatDateTime, sortSiteVisitsBySchedule } from '../utils/kpi'
 
 type WorkPageProps = {
   data: PerformanceData
   selectedSiteVisit: SiteVisit | null
   onAddSiteVisit: (input: NewSiteVisitInput) => void
+  onAddTask: (input: NewTaskInput) => void
   onSelectSiteVisit: (siteVisit: SiteVisit) => void
+  onUpdateSiteVisitStatus: (siteVisit: SiteVisit, status: SiteVisitStatus) => void
+  onUpdateTaskStatus: (task: Task, status: TaskStatus) => void
+  onCreateQuote: (input: NewQuoteInput, bookingInput: QuoteBookingInput | null) => void
+  onUpdateQuoteStatus: (quote: Quote, status: QuoteStatus) => void
+  onBookQuote: (quote: Quote, bookingInput: QuoteBookingInput) => void
 }
 
-export function WorkPage({ data, selectedSiteVisit, onAddSiteVisit, onSelectSiteVisit }: WorkPageProps) {
+export function WorkPage({
+  data,
+  selectedSiteVisit,
+  onAddSiteVisit,
+  onAddTask,
+  onSelectSiteVisit,
+  onUpdateSiteVisitStatus,
+  onUpdateTaskStatus,
+  onCreateQuote,
+  onUpdateQuoteStatus,
+  onBookQuote,
+}: WorkPageProps) {
   const siteVisits = useMemo(() => sortSiteVisitsBySchedule(data.siteVisits), [data.siteVisits])
+  const selectedLinkedTasks = useMemo(
+    () => (selectedSiteVisit ? data.tasks.filter((task) => task.site_visit_id === selectedSiteVisit.id) : []),
+    [data.tasks, selectedSiteVisit],
+  )
+  const selectedLinkedQuotes = useMemo(
+    () => (selectedSiteVisit ? data.quotes.filter((quote) => quote.site_visit_id === selectedSiteVisit.id) : []),
+    [data.quotes, selectedSiteVisit],
+  )
+  const selectedLinkedBookings = useMemo(() => {
+    if (!selectedSiteVisit) {
+      return []
+    }
+
+    const linkedQuoteIds = new Set(selectedLinkedQuotes.map((quote) => quote.id))
+    return data.bookings.filter(
+      (booking) => booking.site_visit_id === selectedSiteVisit.id || (booking.quote_id ? linkedQuoteIds.has(booking.quote_id) : false),
+    )
+  }, [data.bookings, selectedLinkedQuotes, selectedSiteVisit])
   const columns: DataTableColumn<SiteVisit>[] = [
     { key: 'reference', header: 'Reference', render: (siteVisit) => siteVisit.reference_number },
     { key: 'customer', header: 'Customer', render: (siteVisit) => siteVisit.customer_full_name },
@@ -113,7 +160,22 @@ export function WorkPage({ data, selectedSiteVisit, onAddSiteVisit, onSelectSite
         </div>
 
         {selectedSiteVisit ? (
-          <SiteVisitDetailPanel siteVisit={selectedSiteVisit} />
+          <SiteVisitDetailPanel
+            siteVisit={selectedSiteVisit}
+            allSiteVisits={data.siteVisits}
+            linkedTasks={selectedLinkedTasks}
+            linkedQuotes={selectedLinkedQuotes}
+            linkedBookings={selectedLinkedBookings}
+            activityItems={data.activityTimeline}
+            nextQuoteSequence={data.quotes.length + 1}
+            nextBookingSequence={data.bookings.length + 1}
+            onUpdateStatus={onUpdateSiteVisitStatus}
+            onAddTask={onAddTask}
+            onUpdateTaskStatus={onUpdateTaskStatus}
+            onCreateQuote={onCreateQuote}
+            onUpdateQuoteStatus={onUpdateQuoteStatus}
+            onBookQuote={onBookQuote}
+          />
         ) : (
           <div className="surface muted-surface">
             <EmptyState icon={<CalendarPlus size={24} />} title="Select a site visit" message="Details will appear here." />

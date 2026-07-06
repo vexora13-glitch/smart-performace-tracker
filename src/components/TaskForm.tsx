@@ -4,6 +4,9 @@ import { TASK_STATUSES, TASK_TYPES, type NewTaskInput, type SiteVisit } from '..
 
 type TaskFormProps = {
   siteVisits: SiteVisit[]
+  defaultSiteVisitId?: string | null
+  lockSiteVisit?: boolean
+  submitLabel?: string
   onSubmit: (input: NewTaskInput) => void
 }
 
@@ -19,8 +22,8 @@ const formatToday = () => {
   return `${year}-${month}-${day}`
 }
 
-const initialState = (): TaskFormState => ({
-  site_visit_id: null,
+const initialState = (defaultSiteVisitId: string | null): TaskFormState => ({
+  site_visit_id: defaultSiteVisitId,
   title: '',
   description: '',
   due_date: formatToday(),
@@ -28,8 +31,14 @@ const initialState = (): TaskFormState => ({
   task_type: 'General',
 })
 
-export function TaskForm({ siteVisits, onSubmit }: TaskFormProps) {
-  const [form, setForm] = useState<TaskFormState>(initialState)
+export function TaskForm({
+  siteVisits,
+  defaultSiteVisitId = null,
+  lockSiteVisit = false,
+  submitLabel = 'Add Task',
+  onSubmit,
+}: TaskFormProps) {
+  const [form, setForm] = useState<TaskFormState>(() => initialState(defaultSiteVisitId))
 
   const handleChange = (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = event.target
@@ -45,7 +54,7 @@ export function TaskForm({ siteVisits, onSubmit }: TaskFormProps) {
       ...form,
       due_date: form.due_date || null,
     })
-    setForm(initialState())
+    setForm(initialState(defaultSiteVisitId))
   }
 
   return (
@@ -76,7 +85,7 @@ export function TaskForm({ siteVisits, onSubmit }: TaskFormProps) {
       </label>
       <label>
         Site visit
-        <select name="site_visit_id" value={form.site_visit_id ?? ''} onChange={handleChange}>
+        <select name="site_visit_id" value={form.site_visit_id ?? ''} onChange={handleChange} disabled={lockSiteVisit}>
           <option value="">No site visit</option>
           {siteVisits.map((siteVisit) => (
             <option key={siteVisit.id} value={siteVisit.id}>
@@ -91,7 +100,7 @@ export function TaskForm({ siteVisits, onSubmit }: TaskFormProps) {
       </label>
       <button className="primary-button span-2" type="submit">
         <ListPlus size={18} aria-hidden="true" />
-        Add Task
+        {submitLabel}
       </button>
     </form>
   )

@@ -11,12 +11,19 @@ type KpiPageProps = {
   data: PerformanceData
   kpis: MonthlyKpis
   monthLabel: string
+  selectedBookingId: string | null
+  selectedQuoteId: string | null
 }
 
-export function KpiPage({ data, kpis, monthLabel }: KpiPageProps) {
+export function KpiPage({ data, kpis, monthLabel, selectedBookingId, selectedQuoteId }: KpiPageProps) {
   const bookingColumns: DataTableColumn<Booking>[] = [
     { key: 'booking', header: 'Booking Number', render: (booking) => booking.booking_number },
     { key: 'customer', header: 'Customer', render: (booking) => booking.customer_full_name },
+    {
+      key: 'source',
+      header: 'Source',
+      render: (booking) => (booking.booking_source === 'Manual' ? 'Manual Booking' : 'Quote Booking'),
+    },
     { key: 'date', header: 'Booking Date', render: (booking) => formatDate(booking.booking_date) },
     {
       key: 'value',
@@ -60,7 +67,11 @@ export function KpiPage({ data, kpis, monthLabel }: KpiPageProps) {
         {data.bookings.length ? (
           <>
             <div className="desktop-table">
-              <DataTable columns={bookingColumns} records={data.bookings} />
+              <DataTable
+                columns={bookingColumns}
+                records={data.bookings}
+                getRowClassName={(booking) => (booking.id === selectedBookingId ? 'is-highlighted' : undefined)}
+              />
             </div>
             <div className="mobile-record-list">
               {data.bookings.map((booking) => (
@@ -69,7 +80,9 @@ export function KpiPage({ data, kpis, monthLabel }: KpiPageProps) {
                   title={booking.booking_number}
                   subtitle={booking.customer_full_name}
                   status={booking.verification_status}
+                  isHighlighted={booking.id === selectedBookingId}
                   fields={[
+                    { label: 'Source', value: booking.booking_source === 'Manual' ? 'Manual Booking' : 'Quote Booking' },
                     { label: 'Date', value: formatDate(booking.booking_date) },
                     {
                       label: 'Value',
@@ -100,7 +113,30 @@ export function KpiPage({ data, kpis, monthLabel }: KpiPageProps) {
         </div>
 
         {data.quotes.length ? (
-          <DataTable columns={quoteColumns} records={data.quotes} />
+          <>
+            <div className="desktop-table">
+              <DataTable
+                columns={quoteColumns}
+                records={data.quotes}
+                getRowClassName={(quote) => (quote.id === selectedQuoteId ? 'is-highlighted' : undefined)}
+              />
+            </div>
+            <div className="mobile-record-list">
+              {data.quotes.map((quote) => (
+                <MobileRecordCard
+                  key={quote.id}
+                  title={quote.quote_reference}
+                  subtitle={quote.customer_full_name}
+                  status={quote.status}
+                  isHighlighted={quote.id === selectedQuoteId}
+                  fields={[
+                    { label: 'Sent date', value: formatDate(quote.quote_sent_date) },
+                    { label: 'Value', value: quote.quote_value ? formatCurrency(quote.quote_value) : '-' },
+                  ]}
+                />
+              ))}
+            </div>
+          </>
         ) : (
           <EmptyState icon={<BarChart3 size={24} />} title="No quotes yet" message="Quote fields and KPI rules are ready in the schema." />
         )}

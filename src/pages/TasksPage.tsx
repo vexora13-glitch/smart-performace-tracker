@@ -2,17 +2,18 @@ import { CheckSquare, ListPlus } from 'lucide-react'
 import { DataTable, type DataTableColumn } from '../components/DataTable'
 import { EmptyState } from '../components/EmptyState'
 import { MobileRecordCard } from '../components/MobileRecordCard'
-import { StatusPill } from '../components/StatusPill'
 import { TaskForm } from '../components/TaskForm'
-import type { NewTaskInput, PerformanceData, Task } from '../types/performance'
+import { TASK_STATUSES, type NewTaskInput, type PerformanceData, type Task, type TaskStatus } from '../types/performance'
 import { formatDate } from '../utils/kpi'
 
 type TasksPageProps = {
   data: PerformanceData
+  selectedTaskId: string | null
   onAddTask: (input: NewTaskInput) => void
+  onUpdateTaskStatus: (task: Task, status: TaskStatus) => void
 }
 
-export function TasksPage({ data, onAddTask }: TasksPageProps) {
+export function TasksPage({ data, selectedTaskId, onAddTask, onUpdateTaskStatus }: TasksPageProps) {
   const findSiteVisitLabel = (siteVisitId: string | null) => {
     const siteVisit = data.siteVisits.find((record) => record.id === siteVisitId)
     return siteVisit ? `${siteVisit.reference_number} - ${siteVisit.customer_full_name}` : 'None'
@@ -23,7 +24,24 @@ export function TasksPage({ data, onAddTask }: TasksPageProps) {
     { key: 'type', header: 'Type', render: (task) => task.task_type },
     { key: 'due', header: 'Due Date', render: (task) => formatDate(task.due_date) },
     { key: 'siteVisit', header: 'Site Visit', render: (task) => findSiteVisitLabel(task.site_visit_id) },
-    { key: 'status', header: 'Status', render: (task) => <StatusPill status={task.status} /> },
+    {
+      key: 'status',
+      header: 'Status',
+      render: (task) => (
+        <label className="table-select-label">
+          <span className="sr-only">Task status</span>
+          <select
+            className="compact-select"
+            value={task.status}
+            onChange={(event) => onUpdateTaskStatus(task, event.target.value as TaskStatus)}
+          >
+            {TASK_STATUSES.map((status) => (
+              <option key={status}>{status}</option>
+            ))}
+          </select>
+        </label>
+      ),
+    },
   ]
 
   return (
@@ -58,7 +76,11 @@ export function TasksPage({ data, onAddTask }: TasksPageProps) {
         {data.tasks.length ? (
           <>
             <div className="desktop-table">
-              <DataTable columns={columns} records={data.tasks} />
+              <DataTable
+                columns={columns}
+                records={data.tasks}
+                getRowClassName={(task) => (task.id === selectedTaskId ? 'is-highlighted' : undefined)}
+              />
             </div>
             <div className="mobile-record-list">
               {data.tasks.map((task) => (
@@ -67,9 +89,24 @@ export function TasksPage({ data, onAddTask }: TasksPageProps) {
                   title={task.title}
                   subtitle={task.task_type}
                   status={task.status}
+                  isHighlighted={task.id === selectedTaskId}
                   fields={[
                     { label: 'Due', value: formatDate(task.due_date) },
                     { label: 'Site visit', value: findSiteVisitLabel(task.site_visit_id) },
+                    {
+                      label: 'Status',
+                      value: (
+                        <select
+                          className="compact-select"
+                          value={task.status}
+                          onChange={(event) => onUpdateTaskStatus(task, event.target.value as TaskStatus)}
+                        >
+                          {TASK_STATUSES.map((status) => (
+                            <option key={status}>{status}</option>
+                          ))}
+                        </select>
+                      ),
+                    },
                   ]}
                 />
               ))}

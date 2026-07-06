@@ -18,6 +18,8 @@ export const BOOKING_VERIFICATION_STATUSES = [
 
 export const BOOKING_STATUSES = ['Won', 'Cancelled'] as const
 
+export const BOOKING_SOURCES = ['Quote', 'Manual'] as const
+
 export const TASK_STATUSES = ['To Do', 'In Progress', 'Completed'] as const
 
 export const TASK_TYPES = [
@@ -34,6 +36,7 @@ export type SiteVisitStatus = (typeof SITE_VISIT_STATUSES)[number]
 export type QuoteStatus = (typeof QUOTE_STATUSES)[number]
 export type BookingVerificationStatus = (typeof BOOKING_VERIFICATION_STATUSES)[number]
 export type BookingStatus = (typeof BOOKING_STATUSES)[number]
+export type BookingSource = (typeof BOOKING_SOURCES)[number]
 export type TaskStatus = (typeof TASK_STATUSES)[number]
 export type TaskType = (typeof TASK_TYPES)[number]
 
@@ -81,6 +84,7 @@ export type Booking = {
   actual_value: number | null
   verification_status: BookingVerificationStatus
   status: BookingStatus
+  booking_source: BookingSource
   notes: string | null
   created_at: string
   updated_at: string
@@ -113,6 +117,7 @@ export type PerformanceData = {
   quotes: Quote[]
   bookings: Booking[]
   tasks: Task[]
+  activityTimeline: ActivityTimelineItem[]
 }
 
 export type MonthlyKpis = {
@@ -144,4 +149,27 @@ export type NewTaskInput = {
   due_date: string | null
   status: TaskStatus
   task_type: TaskType
+}
+
+export type NewQuoteInput = {
+  site_visit_id: string | null
+  quote_reference: string
+  customer_full_name: string
+  quote_value: number | null
+  quote_sent_date: string | null
+  status: QuoteStatus
+}
+
+export type QuoteBookingInput = {
+  booking_number: string
+  customer_full_name: string
+  booking_date: string
+  estimated_value: number
+  notes: string
+}
+
+export type NewBookingInput = QuoteBookingInput & {
+  site_visit_id: string | null
+  quote_id: string | null
+  booking_source: BookingSource
 }

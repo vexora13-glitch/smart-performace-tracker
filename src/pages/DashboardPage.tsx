@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react'
 import { DataTable, type DataTableColumn } from '../components/DataTable'
 import { EmptyState } from '../components/EmptyState'
 import { KpiSummaryGrid } from '../components/KpiSummaryGrid'
+import { ManualBookingForm } from '../components/ManualBookingForm'
 import { MobileRecordCard } from '../components/MobileRecordCard'
 import { QuickActionButton } from '../components/QuickActionButton'
 import { SearchInput } from '../components/SearchInput'
@@ -10,9 +11,23 @@ import { SiteVisitDetailPanel } from '../components/SiteVisitDetailPanel'
 import { SiteVisitForm } from '../components/SiteVisitForm'
 import { StatusPill } from '../components/StatusPill'
 import { TaskForm } from '../components/TaskForm'
-import type { MonthlyKpis, NewSiteVisitInput, NewTaskInput, PerformanceData, SiteVisit } from '../types/performance'
+import type {
+  MonthlyKpis,
+  NewBookingInput,
+  NewQuoteInput,
+  NewSiteVisitInput,
+  NewTaskInput,
+  PerformanceData,
+  Quote,
+  QuoteBookingInput,
+  QuoteStatus,
+  SiteVisit,
+  SiteVisitStatus,
+  Task,
+  TaskStatus,
+} from '../types/performance'
 import { formatDateTime, sortSiteVisitsBySchedule } from '../utils/kpi'
-import { searchPerformanceData } from '../utils/search'
+import { searchPerformanceData, type SearchResult } from '../utils/search'
 
 type DashboardPageProps = {
   data: PerformanceData
@@ -23,7 +38,14 @@ type DashboardPageProps = {
   onSearchChange: (value: string) => void
   onAddSiteVisit: (input: NewSiteVisitInput) => void
   onAddTask: (input: NewTaskInput) => void
+  onCreateManualBooking: (input: NewBookingInput) => void
+  onSelectSearchResult: (result: SearchResult) => void
   onSelectSiteVisit: (siteVisit: SiteVisit) => void
+  onUpdateSiteVisitStatus: (siteVisit: SiteVisit, status: SiteVisitStatus) => void
+  onUpdateTaskStatus: (task: Task, status: TaskStatus) => void
+  onCreateQuote: (input: NewQuoteInput, bookingInput: QuoteBookingInput | null) => void
+  onUpdateQuoteStatus: (quote: Quote, status: QuoteStatus) => void
+  onBookQuote: (quote: Quote, bookingInput: QuoteBookingInput) => void
 }
 
 export function DashboardPage({
@@ -35,14 +57,39 @@ export function DashboardPage({
   onSearchChange,
   onAddSiteVisit,
   onAddTask,
+  onCreateManualBooking,
+  onSelectSearchResult,
   onSelectSiteVisit,
+  onUpdateSiteVisitStatus,
+  onUpdateTaskStatus,
+  onCreateQuote,
+  onUpdateQuoteStatus,
+  onBookQuote,
 }: DashboardPageProps) {
-  const [showManualBookingPlaceholder, setShowManualBookingPlaceholder] = useState(false)
+  const [showManualBookingForm, setShowManualBookingForm] = useState(false)
   const bookedSiteVisits = useMemo(
     () => sortSiteVisitsBySchedule(data.siteVisits.filter((siteVisit) => siteVisit.status === 'Booked')),
     [data.siteVisits],
   )
   const searchResults = useMemo(() => searchPerformanceData(data, searchQuery), [data, searchQuery])
+  const selectedLinkedTasks = useMemo(
+    () => (selectedSiteVisit ? data.tasks.filter((task) => task.site_visit_id === selectedSiteVisit.id) : []),
+    [data.tasks, selectedSiteVisit],
+  )
+  const selectedLinkedQuotes = useMemo(
+    () => (selectedSiteVisit ? data.quotes.filter((quote) => quote.site_visit_id === selectedSiteVisit.id) : []),
+    [data.quotes, selectedSiteVisit],
+  )
+  const selectedLinkedBookings = useMemo(() => {
+    if (!selectedSiteVisit) {
+      return []
+    }
+
+    const linkedQuoteIds = new Set(selectedLinkedQuotes.map((quote) => quote.id))
+    return data.bookings.filter(
+      (booking) => booking.site_visit_id === selectedSiteVisit.id || (booking.quote_id ? linkedQuoteIds.has(booking.quote_id) : false),
+    )
+  }, [data.bookings, selectedLinkedQuotes, selectedSiteVisit])
 
   const columns: DataTableColumn<SiteVisit>[] = [
     { key: 'reference', header: 'Site Visit Reference', render: (siteVisit) => siteVisit.reference_number },
@@ -89,13 +136,18 @@ export function DashboardPage({
           {searchResults.length ? (
             <div className="search-results">
               {searchResults.map((result) => (
-                <div className="search-result" key={`${result.type}-${result.id}`}>
+                <button
+                  className="search-result"
+                  key={`${result.type}-${result.id}`}
+                  type="button"
+                  onClick={() => onSelectSearchResult(result)}
+                >
                   <div>
                     <strong>{result.title}</strong>
-                    <span>{result.subtitle}</span>
+                    <span>{result.type.replace('_', ' ')} - {result.subtitle}</span>
                   </div>
                   <StatusPill status={result.status} />
-                </div>
+                </button>
               ))}
             </div>
           ) : (
@@ -112,19 +164,26 @@ export function DashboardPage({
         <QuickActionButton
           icon={<ClipboardList size={20} />}
           label="Manual Booking"
-          hint="Prompt 2 entry point"
-          onClick={() => setShowManualBookingPlaceholder(true)}
+          hint="Estimated sales entry"
+          onClick={() => setShowManualBookingForm((current) => !current)}
         />
       </section>
 
-      {showManualBookingPlaceholder ? (
-        <section className="surface manual-booking-placeholder">
-          <div>
-            <span className="eyebrow">Manual booking foundation</span>
-            <h2>Manual Booking Entry</h2>
-            <p>Ready for booking number, customer name, booking date, and estimated value in Prompt 2.</p>
+      {showManualBookingForm ? (
+        <section className="surface" id="manual-booking">
+          <div className="section-header">
+            <div>
+              <span className="eyebrow">Manual Booking</span>
+              <h2>Manual Booking Entry</h2>
+            </div>
+            <StatusPill status="Estimated" />
           </div>
-          <StatusPill status="Estimated" />
+          <ManualBookingForm
+            siteVisits={data.siteVisits}
+            quotes={data.quotes}
+            nextBookingSequence={data.bookings.length + 1}
+            onSubmit={onCreateManualBooking}
+          />
         </section>
       ) : null}
 
@@ -201,7 +260,22 @@ export function DashboardPage({
         </div>
 
         {selectedSiteVisit ? (
-          <SiteVisitDetailPanel siteVisit={selectedSiteVisit} />
+          <SiteVisitDetailPanel
+            siteVisit={selectedSiteVisit}
+            allSiteVisits={data.siteVisits}
+            linkedTasks={selectedLinkedTasks}
+            linkedQuotes={selectedLinkedQuotes}
+            linkedBookings={selectedLinkedBookings}
+            activityItems={data.activityTimeline}
+            nextQuoteSequence={data.quotes.length + 1}
+            nextBookingSequence={data.bookings.length + 1}
+            onUpdateStatus={onUpdateSiteVisitStatus}
+            onAddTask={onAddTask}
+            onUpdateTaskStatus={onUpdateTaskStatus}
+            onCreateQuote={onCreateQuote}
+            onUpdateQuoteStatus={onUpdateQuoteStatus}
+            onBookQuote={onBookQuote}
+          />
         ) : (
           <div className="surface muted-surface">
             <EmptyState icon={<ClipboardList size={24} />} title="No record selected" message="Open a site visit row or card to preview details." />

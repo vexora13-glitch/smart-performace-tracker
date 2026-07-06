@@ -1,4 +1,4 @@
-import type { Booking, PerformanceData, Quote, SiteVisit, Task } from '../types/performance'
+import type { ActivityTimelineItem, Booking, PerformanceData, Quote, SiteVisit, Task } from '../types/performance'
 
 const formatDate = (date: Date) => {
   const year = date.getFullYear()
@@ -112,6 +112,7 @@ export function createDemoPerformanceData(): PerformanceData {
       actual_value: null,
       verification_status: 'Estimated',
       status: 'Won',
+      booking_source: 'Quote',
       notes: 'Manual verification pending.',
       created_at: createdAt,
       updated_at: createdAt,
@@ -127,7 +128,24 @@ export function createDemoPerformanceData(): PerformanceData {
       actual_value: 2300,
       verification_status: 'Verified',
       status: 'Won',
+      booking_source: 'Quote',
       notes: 'Verified manually for Prompt 1 sample data.',
+      created_at: createdAt,
+      updated_at: createdAt,
+    },
+    {
+      id: 'demo-booking-3',
+      site_visit_id: null,
+      quote_id: null,
+      booking_number: 'B-DEMO-003',
+      customer_full_name: 'Manual Booking Sample',
+      booking_date: dateWithOffset(2),
+      estimated_value: 1650,
+      actual_value: null,
+      verification_status: 'Estimated',
+      status: 'Won',
+      booking_source: 'Manual',
+      notes: 'Created without a site visit or quote.',
       created_at: createdAt,
       updated_at: createdAt,
     },
@@ -169,5 +187,35 @@ export function createDemoPerformanceData(): PerformanceData {
     },
   ]
 
-  return { siteVisits, quotes, bookings, tasks }
+  const activityTimeline: ActivityTimelineItem[] = [
+    {
+      id: 'demo-activity-1',
+      entity_type: 'site_visits',
+      entity_id: 'demo-site-visit-3',
+      event_type: 'status_changed',
+      event_label: 'Site visit status changed',
+      event_description: 'Hannah Lee moved to Quote Sent.',
+      created_at: createdAt,
+    },
+    {
+      id: 'demo-activity-2',
+      entity_type: 'bookings',
+      entity_id: 'demo-booking-3',
+      event_type: 'created',
+      event_label: 'Manual booking created',
+      event_description: 'Manual Booking Sample',
+      created_at: createdAt,
+    },
+    {
+      id: 'demo-activity-3',
+      entity_type: 'tasks',
+      entity_id: 'demo-task-2',
+      event_type: 'completed',
+      event_label: 'Task completed',
+      event_description: 'Crew packing training',
+      created_at: createdAt,
+    },
+  ]
+
+  return { siteVisits, quotes, bookings, tasks, activityTimeline }
 }
