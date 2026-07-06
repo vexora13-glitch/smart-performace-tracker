@@ -8,8 +8,10 @@ import {
   createLocalQuote,
   createLocalSiteVisit,
   createLocalTask,
+  loadKpiTargets,
   loadPerformanceData,
   saveBooking,
+  saveKpiTargets,
   saveQuote,
   saveSiteVisit,
   saveTask,
@@ -20,6 +22,8 @@ import {
 } from './services/performanceService'
 import type {
   Booking,
+  BookingVerificationUpdate,
+  KpiTarget,
   NewBookingInput,
   NewQuoteInput,
   NewSiteVisitInput,
@@ -34,7 +38,8 @@ import type {
   Task,
   TaskStatus,
 } from './types/performance'
-import { calculateMonthlyKpis, getCurrentMonthRange } from './utils/kpi'
+import { calculateMonthlyKpis, formatCurrency, getMonthRange } from './utils/kpi'
+import { createDefaultKpiTargets } from './utils/kpiTargets'
 import type { SearchResult } from './utils/search'
 import { DashboardPage } from './pages/DashboardPage'
 import { KpiPage } from './pages/KpiPage'
@@ -87,20 +92,23 @@ function App() {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
   const [selectedBookingId, setSelectedBookingId] = useState<string | null>(null)
   const [selectedQuoteId, setSelectedQuoteId] = useState<string | null>(null)
+  const [selectedMonth, setSelectedMonth] = useState(() => new Date())
+  const [kpiTargets, setKpiTargets] = useState<KpiTarget[]>(() => createDefaultKpiTargets())
 
   useEffect(() => {
     let isMounted = true
 
     async function loadData() {
-      const result = await loadPerformanceData()
+      const [performanceResult, targetsResult] = await Promise.all([loadPerformanceData(), loadKpiTargets()])
 
       if (!isMounted) {
         return
       }
 
-      setData(result.data)
-      setNotice(result.notice)
-      setSelectedSiteVisit(result.data.siteVisits[0] ?? null)
+      setData(performanceResult.data)
+      setKpiTargets(targetsResult.targets)
+      setNotice([performanceResult.notice, targetsResult.notice].filter(Boolean).join(' '))
+      setSelectedSiteVisit(performanceResult.data.siteVisits[0] ?? null)
     }
 
     void loadData()
@@ -110,8 +118,8 @@ function App() {
     }
   }, [])
 
-  const monthRange = useMemo(() => getCurrentMonthRange(), [])
-  const kpis = useMemo(() => calculateMonthlyKpis(data), [data])
+  const monthRange = useMemo(() => getMonthRange(selectedMonth), [selectedMonth])
+  const kpis = useMemo(() => calculateMonthlyKpis(data, selectedMonth), [data, selectedMonth])
 
   const replaceSiteVisit = (draft: SiteVisit, saved: SiteVisit) => {
     setData((current) => ({
@@ -162,6 +170,148 @@ function App() {
         item.entity_type === 'tasks' && item.entity_id === draft.id ? { ...item, entity_id: saved.id } : item,
       ),
     }))
+  }
+
+  const handlePreviousMonth = () => {
+    setSelectedMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))
+  }
+
+  const handleCurrentMonth = () => {
+    setSelectedMonth(new Date())
+  }
+
+  const handleNextMonth = () => {
+    setSelectedMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))
+  }
+
+  const handleSaveKpiTargets = (targets: KpiTarget[]) => {
+    setKpiTargets(targets)
+
+    void saveKpiTargets(targets)
+      .then((savedTargets) => {
+        setKpiTargets(savedTargets)
+        setNotice('KPI targets saved.')
+      })
+      .catch((error: Error) => {
+        setNotice(`KPI targets are kept locally for this session. Supabase save failed: ${error.message}`)
+      })
+  }
+
+  const handleApplyBookingVerifications = (updates: BookingVerificationUpdate[]) => {
+    if (!updates.length) {
+      return
+    }
+
+    const updatesByBookingId = new Map(updates.map((update) => [update.bookingId, update]))
+    const now = new Date().toISOString()
+    const updatedBookings = data.bookings
+      .map((booking) => {
+        const update = updatesByBookingId.get(booking.id)
+
+        if (!update) {
+          return null
+        }
+
+        return {
+          ...booking,
+          actual_value: update.actualValue,
+          verification_status: update.verificationStatus,
+          updated_at: now,
+        }
+      })
+      .filter((booking): booking is Booking => Boolean(booking))
+    const updatedBookingById = new Map(updatedBookings.map((booking) => [booking.id, booking]))
+    const activities = updatedBookings.flatMap((booking) => {
+      const update = updatesByBookingId.get(booking.id)
+      const verifiedActivity = createWorkflowActivity(
+        'bookings',
+        booking.id,
+        'booking_verified',
+        'Booking verified',
+        `${booking.booking_number} verified at ${booking.actual_value === null ? 'no actual value' : formatCurrency(booking.actual_value)}.`,
+      )
+
+      if (!update?.varianceDetected || update.varianceAmount === undefined) {
+        return [verifiedActivity]
+      }
+
+      return [
+        verifiedActivity,
+        createWorkflowActivity(
+          'bookings',
+          booking.id,
+          'booking_variance_detected',
+          'Booking variance detected',
+          `${booking.booking_number}: estimated ${formatCurrency(booking.estimated_value)}, actual ${formatCurrency(
+            booking.actual_value ?? booking.estimated_value,
+          )}, variance ${formatCurrency(update.varianceAmount)}.`,
+        ),
+      ]
+    })
+
+    setData((current) => ({
+      ...current,
+      bookings: current.bookings.map((booking) => updatedBookingById.get(booking.id) ?? booking),
+      activityTimeline: [...activities, ...current.activityTimeline],
+    }))
+
+    void Promise.all(updatedBookings.map((booking) => updateBooking(booking)))
+      .then((savedBookings) => {
+        const savedBookingById = new Map(savedBookings.map((booking) => [booking.id, booking]))
+        setData((current) => ({
+          ...current,
+          bookings: current.bookings.map((booking) => savedBookingById.get(booking.id) ?? booking),
+        }))
+        setNotice(`${savedBookings.length} booking verification update${savedBookings.length === 1 ? '' : 's'} applied.`)
+      })
+      .catch((error: Error) => {
+        setNotice(`Booking verification is kept locally for this session. Supabase update failed: ${error.message}`)
+      })
+  }
+
+  const handleMarkBookingsNotFound = (bookingIds: string[]) => {
+    if (!bookingIds.length) {
+      return
+    }
+
+    const bookingIdSet = new Set(bookingIds)
+    const now = new Date().toISOString()
+    const updatedBookings = data.bookings
+      .filter((booking) => bookingIdSet.has(booking.id))
+      .map((booking) => ({
+        ...booking,
+        verification_status: 'Not Found' as const,
+        updated_at: now,
+      }))
+    const updatedBookingById = new Map(updatedBookings.map((booking) => [booking.id, booking]))
+    const activities = updatedBookings.map((booking) =>
+      createWorkflowActivity(
+        'bookings',
+        booking.id,
+        'booking_not_found',
+        'Booking not found',
+        `${booking.booking_number} was not found in the monthly import.`,
+      ),
+    )
+
+    setData((current) => ({
+      ...current,
+      bookings: current.bookings.map((booking) => updatedBookingById.get(booking.id) ?? booking),
+      activityTimeline: [...activities, ...current.activityTimeline],
+    }))
+
+    void Promise.all(updatedBookings.map((booking) => updateBooking(booking)))
+      .then((savedBookings) => {
+        const savedBookingById = new Map(savedBookings.map((booking) => [booking.id, booking]))
+        setData((current) => ({
+          ...current,
+          bookings: current.bookings.map((booking) => savedBookingById.get(booking.id) ?? booking),
+        }))
+        setNotice(`${savedBookings.length} booking${savedBookings.length === 1 ? '' : 's'} marked Not Found.`)
+      })
+      .catch((error: Error) => {
+        setNotice(`Not Found status is kept locally for this session. Supabase update failed: ${error.message}`)
+      })
   }
 
   const handleAddSiteVisit = (input: NewSiteVisitInput) => {
@@ -576,9 +726,13 @@ function App() {
           <DashboardPage
             data={data}
             kpis={kpis}
+            targets={kpiTargets}
             monthLabel={monthRange.label}
             searchQuery={searchQuery}
             selectedSiteVisit={selectedSiteVisit}
+            onPreviousMonth={handlePreviousMonth}
+            onCurrentMonth={handleCurrentMonth}
+            onNextMonth={handleNextMonth}
             onSearchChange={setSearchQuery}
             onAddSiteVisit={handleAddSiteVisit}
             onAddTask={handleAddTask}
@@ -621,9 +775,17 @@ function App() {
           <KpiPage
             data={data}
             kpis={kpis}
+            targets={kpiTargets}
+            monthRange={monthRange}
             monthLabel={monthRange.label}
             selectedBookingId={selectedBookingId}
             selectedQuoteId={selectedQuoteId}
+            onPreviousMonth={handlePreviousMonth}
+            onCurrentMonth={handleCurrentMonth}
+            onNextMonth={handleNextMonth}
+            onSaveTargets={handleSaveKpiTargets}
+            onApplyBookingVerifications={handleApplyBookingVerifications}
+            onMarkBookingsNotFound={handleMarkBookingsNotFound}
           />
         )
       case 'reports':

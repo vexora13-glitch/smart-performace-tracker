@@ -112,6 +112,31 @@ export type ActivityTimelineItem = {
   created_at: string
 }
 
+export const KPI_TARGET_KEYS = [
+  'sales_won',
+  'site_visits_done',
+  'quotes_sent',
+  'bookings_won',
+  'training_sessions',
+  'consultancy_meetings',
+] as const
+
+export type KpiTargetKey = (typeof KPI_TARGET_KEYS)[number]
+export type KpiTargetUnit = 'NZD' | 'count'
+export type KpiPeriodType = 'monthly'
+
+export type KpiTarget = {
+  id: string
+  kpi_key: KpiTargetKey
+  kpi_name: string
+  target_value: number
+  unit: KpiTargetUnit
+  period_type: KpiPeriodType
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
 export type PerformanceData = {
   siteVisits: SiteVisit[]
   quotes: Quote[]
@@ -121,11 +146,29 @@ export type PerformanceData = {
 }
 
 export type MonthlyKpis = {
-  salesWon: number
+  estimatedSalesWon: number
+  verifiedSalesWon: number
+  totalSalesProgress: number
+  mismatchSales: number
+  notFoundSales: number
+  estimatedBookingCount: number
+  verifiedBookingCount: number
+  mismatchBookingCount: number
+  notFoundBookingCount: number
   siteVisitsDone: number
   quotesSent: number
+  bookingsWon: number
   trainingSessions: number
   consultancyMeetings: number
+}
+
+export type BookingVerificationUpdate = {
+  bookingId: string
+  actualValue: number | null
+  verificationStatus: BookingVerificationStatus
+  varianceAmount?: number
+  variancePercent?: number | null
+  varianceDetected?: boolean
 }
 
 export type NewSiteVisitInput = {

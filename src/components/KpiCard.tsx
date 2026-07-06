@@ -5,7 +5,7 @@ type KpiCardProps = {
   value: string
   detail: string
   icon: ReactNode
-  tone: 'blue' | 'green' | 'amber' | 'teal' | 'indigo'
+  tone: 'blue' | 'green' | 'amber' | 'teal' | 'indigo' | 'gray' | 'red'
 }
 
 export function KpiCard({ title, value, detail, icon, tone }: KpiCardProps) {

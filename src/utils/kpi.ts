@@ -3,13 +3,13 @@ import type { Booking, MonthlyKpis, PerformanceData, Quote, SiteVisit, Task } fr
 const completedSiteVisitStatuses = new Set(['Report Sent', 'Quote Sent', 'Won', 'Lost / Closed'])
 const sentQuoteStatuses = new Set(['Sent', 'Follow Up', 'Booked', 'Lost'])
 
-type MonthRange = {
+export type MonthRange = {
   start: Date
   end: Date
   label: string
 }
 
-function parseDate(value: string | null | undefined) {
+export function parseDate(value: string | null | undefined) {
   if (!value) {
     return null
   }
@@ -23,17 +23,25 @@ function parseDate(value: string | null | undefined) {
   return Number.isNaN(parsed.getTime()) ? null : parsed
 }
 
-function isWithinMonth(value: string | null | undefined, range: MonthRange) {
+export function isWithinMonth(value: string | null | undefined, range: MonthRange) {
   const date = parseDate(value)
   return Boolean(date && date >= range.start && date <= range.end)
 }
 
-function getBookingSalesValue(booking: Booking) {
+export function getBookingVerifiedSalesValue(booking: Booking) {
   if (booking.verification_status === 'Verified' && booking.actual_value !== null) {
     return booking.actual_value
   }
 
   return booking.estimated_value
+}
+
+export function getBookingVariance(booking: Booking) {
+  if (booking.actual_value === null) {
+    return null
+  }
+
+  return booking.actual_value - booking.estimated_value
 }
 
 function countCompletedSiteVisits(siteVisits: SiteVisit[], range: MonthRange) {
@@ -58,7 +66,7 @@ function countCompletedTasks(tasks: Task[], taskType: Task['task_type'], range: 
   ).length
 }
 
-export function getCurrentMonthRange(referenceDate = new Date()): MonthRange {
+export function getMonthRange(referenceDate = new Date()): MonthRange {
   const start = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), 1)
   const end = new Date(referenceDate.getFullYear(), referenceDate.getMonth() + 1, 0, 23, 59, 59, 999)
   const label = referenceDate.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
@@ -66,16 +74,47 @@ export function getCurrentMonthRange(referenceDate = new Date()): MonthRange {
   return { start, end, label }
 }
 
+export function getCurrentMonthRange(referenceDate = new Date()): MonthRange {
+  return getMonthRange(referenceDate)
+}
+
+export function filterBookingsForMonth(bookings: Booking[], range: MonthRange) {
+  return bookings.filter((booking) => booking.status === 'Won' && isWithinMonth(booking.booking_date, range))
+}
+
+export function filterQuotesForMonth(quotes: Quote[], range: MonthRange) {
+  return quotes.filter((quote) => isWithinMonth(quote.quote_sent_date, range))
+}
+
 export function calculateMonthlyKpis(data: PerformanceData, referenceDate = new Date()): MonthlyKpis {
-  const range = getCurrentMonthRange(referenceDate)
-  const salesWon = data.bookings
-    .filter((booking) => booking.status === 'Won' && isWithinMonth(booking.booking_date, range))
-    .reduce((total, booking) => total + getBookingSalesValue(booking), 0)
+  const range = getMonthRange(referenceDate)
+  const monthBookings = filterBookingsForMonth(data.bookings, range)
+  const estimatedBookings = monthBookings.filter((booking) => booking.verification_status === 'Estimated')
+  const verifiedBookings = monthBookings.filter((booking) => booking.verification_status === 'Verified')
+  const mismatchBookings = monthBookings.filter((booking) => booking.verification_status === 'Mismatch')
+  const notFoundBookings = monthBookings.filter((booking) => booking.verification_status === 'Not Found')
+
+  const estimatedSalesWon = estimatedBookings.reduce((total, booking) => total + booking.estimated_value, 0)
+  const verifiedSalesWon = verifiedBookings.reduce(
+    (total, booking) => total + getBookingVerifiedSalesValue(booking),
+    0,
+  )
+  const mismatchSales = mismatchBookings.reduce((total, booking) => total + getBookingVerifiedSalesValue(booking), 0)
+  const notFoundSales = notFoundBookings.reduce((total, booking) => total + booking.estimated_value, 0)
 
   return {
-    salesWon,
+    estimatedSalesWon,
+    verifiedSalesWon,
+    totalSalesProgress: estimatedSalesWon + verifiedSalesWon,
+    mismatchSales,
+    notFoundSales,
+    estimatedBookingCount: estimatedBookings.length,
+    verifiedBookingCount: verifiedBookings.length,
+    mismatchBookingCount: mismatchBookings.length,
+    notFoundBookingCount: notFoundBookings.length,
     siteVisitsDone: countCompletedSiteVisits(data.siteVisits, range),
     quotesSent: countSentQuotes(data.quotes, range),
+    bookingsWon: monthBookings.length,
     trainingSessions: countCompletedTasks(data.tasks, 'Training', range),
     consultancyMeetings: countCompletedTasks(data.tasks, 'Consultancy', range),
   }

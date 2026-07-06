@@ -5,6 +5,7 @@ import { EmptyState } from '../components/EmptyState'
 import { KpiSummaryGrid } from '../components/KpiSummaryGrid'
 import { ManualBookingForm } from '../components/ManualBookingForm'
 import { MobileRecordCard } from '../components/MobileRecordCard'
+import { MonthSelector } from '../components/MonthSelector'
 import { QuickActionButton } from '../components/QuickActionButton'
 import { SearchInput } from '../components/SearchInput'
 import { SiteVisitDetailPanel } from '../components/SiteVisitDetailPanel'
@@ -12,6 +13,7 @@ import { SiteVisitForm } from '../components/SiteVisitForm'
 import { StatusPill } from '../components/StatusPill'
 import { TaskForm } from '../components/TaskForm'
 import type {
+  KpiTarget,
   MonthlyKpis,
   NewBookingInput,
   NewQuoteInput,
@@ -32,9 +34,13 @@ import { searchPerformanceData, type SearchResult } from '../utils/search'
 type DashboardPageProps = {
   data: PerformanceData
   kpis: MonthlyKpis
+  targets: KpiTarget[]
   monthLabel: string
   searchQuery: string
   selectedSiteVisit: SiteVisit | null
+  onPreviousMonth: () => void
+  onCurrentMonth: () => void
+  onNextMonth: () => void
   onSearchChange: (value: string) => void
   onAddSiteVisit: (input: NewSiteVisitInput) => void
   onAddTask: (input: NewTaskInput) => void
@@ -51,9 +57,13 @@ type DashboardPageProps = {
 export function DashboardPage({
   data,
   kpis,
+  targets,
   monthLabel,
   searchQuery,
   selectedSiteVisit,
+  onPreviousMonth,
+  onCurrentMonth,
+  onNextMonth,
   onSearchChange,
   onAddSiteVisit,
   onAddTask,
@@ -115,8 +125,14 @@ export function DashboardPage({
         <div>
           <span className="eyebrow">Prompt 1 foundation</span>
           <h1>Dashboard</h1>
-          <p>Current month performance, booked site visits, tasks, and fast entry.</p>
+          <p>Selected month performance, booked site visits, tasks, and fast entry.</p>
         </div>
+        <MonthSelector
+          monthLabel={monthLabel}
+          onPreviousMonth={onPreviousMonth}
+          onCurrentMonth={onCurrentMonth}
+          onNextMonth={onNextMonth}
+        />
       </header>
 
       <SearchInput
@@ -156,7 +172,7 @@ export function DashboardPage({
         </section>
       ) : null}
 
-      <KpiSummaryGrid kpis={kpis} monthLabel={monthLabel} />
+      <KpiSummaryGrid kpis={kpis} targets={targets} monthLabel={monthLabel} />
 
       <section className="quick-actions-grid" aria-label="Quick actions">
         <QuickActionButton icon={<CalendarPlus size={20} />} label="Add Site Visit" hint="Fast booking entry" href="#quick-site-visit" />

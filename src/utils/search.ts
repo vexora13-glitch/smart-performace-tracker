@@ -52,7 +52,7 @@ export function searchPerformanceData(data: PerformanceData, rawQuery: string): 
       id: booking.id,
       type: 'booking' as const,
       title: `${booking.booking_number} - ${booking.customer_full_name}`,
-      subtitle: booking.booking_source === 'Manual' ? 'Manual Booking' : 'Quote Booking',
+      subtitle: booking.booking_source === 'Manual' ? 'Manual Booking' : 'Workflow Booking',
       status: booking.verification_status,
       siteVisitId: booking.site_visit_id,
     }))

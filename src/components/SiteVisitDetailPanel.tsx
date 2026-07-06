@@ -15,7 +15,7 @@ import {
   type Task,
   type TaskStatus,
 } from '../types/performance'
-import { formatCurrency, formatDate } from '../utils/kpi'
+import { formatCurrency, formatDate, getBookingVariance } from '../utils/kpi'
 import { BookingCompletionForm } from './BookingCompletionForm'
 import { QuoteForm } from './QuoteForm'
 import { StatusPill } from './StatusPill'
@@ -47,6 +47,17 @@ const formatActivityDate = (value: string) =>
     hour: '2-digit',
     minute: '2-digit',
   })
+
+function formatBookingVariance(booking: Booking) {
+  const variance = getBookingVariance(booking)
+
+  if (variance === null) {
+    return '-'
+  }
+
+  const prefix = variance > 0 ? '+' : ''
+  return `${prefix}${formatCurrency(variance)}`
+}
 
 export function SiteVisitDetailPanel({
   siteVisit,
@@ -281,7 +292,7 @@ export function SiteVisitDetailPanel({
                 <div className="record-card__topline">
                   <div>
                     <strong>{booking.booking_number}</strong>
-                    <span>{booking.booking_source === 'Manual' ? 'Manual Booking' : 'Quote Booking'}</span>
+                    <span>{booking.booking_source === 'Manual' ? 'Manual Booking' : 'Workflow Booking'}</span>
                   </div>
                   <StatusPill status={booking.verification_status} />
                 </div>
@@ -293,6 +304,14 @@ export function SiteVisitDetailPanel({
                   <div>
                     <dt>Estimated value</dt>
                     <dd>{formatCurrency(booking.estimated_value)}</dd>
+                  </div>
+                  <div>
+                    <dt>Actual value</dt>
+                    <dd>{booking.actual_value === null ? '-' : formatCurrency(booking.actual_value)}</dd>
+                  </div>
+                  <div>
+                    <dt>Variance</dt>
+                    <dd>{formatBookingVariance(booking)}</dd>
                   </div>
                   <div>
                     <dt>Status</dt>

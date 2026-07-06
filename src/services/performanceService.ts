@@ -3,6 +3,7 @@ import { hasSupabaseConfig, supabase } from '../lib/supabase'
 import type {
   ActivityTimelineItem,
   Booking,
+  KpiTarget,
   NewBookingInput,
   NewQuoteInput,
   NewSiteVisitInput,
@@ -12,10 +13,16 @@ import type {
   SiteVisit,
   Task,
 } from '../types/performance'
+import { createDefaultKpiTargets, mergeKpiTargets } from '../utils/kpiTargets'
 
 export type PerformanceDataResult = {
   data: PerformanceData
   source: 'supabase' | 'demo'
+  notice: string
+}
+
+export type KpiTargetsResult = {
+  targets: KpiTarget[]
   notice: string
 }
 
@@ -98,6 +105,53 @@ export async function loadPerformanceData(): Promise<PerformanceDataResult> {
     source: 'supabase',
     notice: 'Connected to Supabase.',
   }
+}
+
+export async function loadKpiTargets(): Promise<KpiTargetsResult> {
+  const defaults = createDefaultKpiTargets()
+
+  if (!hasSupabaseConfig || !supabase) {
+    return {
+      targets: defaults,
+      notice: '',
+    }
+  }
+
+  const { data, error } = await supabase
+    .from('kpi_targets')
+    .select('*')
+    .eq('period_type', 'monthly')
+    .eq('is_active', true)
+
+  if (error) {
+    return {
+      targets: defaults,
+      notice: `KPI targets are using defaults. Supabase target load failed: ${error.message}`,
+    }
+  }
+
+  return {
+    targets: mergeKpiTargets((data ?? []) as KpiTarget[]),
+    notice: '',
+  }
+}
+
+export async function saveKpiTargets(targets: KpiTarget[]): Promise<KpiTarget[]> {
+  if (!supabase) {
+    return targets
+  }
+
+  const payload = targets.map(({ id: _id, created_at: _createdAt, updated_at: _updatedAt, ...target }) => target)
+  const { data, error } = await supabase
+    .from('kpi_targets')
+    .upsert(payload, { onConflict: 'kpi_key,period_type' })
+    .select('*')
+
+  if (error) {
+    throw new Error(error.message)
+  }
+
+  return mergeKpiTargets((data ?? []) as KpiTarget[])
 }
 
 export function createLocalSiteVisit(input: NewSiteVisitInput, sequence: number): SiteVisit {
