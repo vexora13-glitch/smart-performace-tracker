@@ -1,121 +1,161 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
+import { FileText, Settings } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
 import './App.css'
+import { AppShell } from './components/AppShell'
+import { createLocalSiteVisit, createLocalTask, loadPerformanceData, saveSiteVisit, saveTask } from './services/performanceService'
+import type { NewSiteVisitInput, NewTaskInput, PageKey, PerformanceData, SiteVisit, Task } from './types/performance'
+import { calculateMonthlyKpis, getCurrentMonthRange } from './utils/kpi'
+import { DashboardPage } from './pages/DashboardPage'
+import { KpiPage } from './pages/KpiPage'
+import { PlaceholderPage } from './pages/PlaceholderPage'
+import { TasksPage } from './pages/TasksPage'
+import { WorkPage } from './pages/WorkPage'
+
+const initialData: PerformanceData = {
+  siteVisits: [],
+  quotes: [],
+  bookings: [],
+  tasks: [],
+}
 
 function App() {
-  const [count, setCount] = useState(0)
+  const [activePage, setActivePage] = useState<PageKey>('dashboard')
+  const [data, setData] = useState<PerformanceData>(initialData)
+  const [notice, setNotice] = useState('Loading performance data...')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [selectedSiteVisit, setSelectedSiteVisit] = useState<SiteVisit | null>(null)
+
+  useEffect(() => {
+    let isMounted = true
+
+    async function loadData() {
+      const result = await loadPerformanceData()
+
+      if (!isMounted) {
+        return
+      }
+
+      setData(result.data)
+      setNotice(result.notice)
+      setSelectedSiteVisit(result.data.siteVisits[0] ?? null)
+    }
+
+    void loadData()
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
+
+  const monthRange = useMemo(() => getCurrentMonthRange(), [])
+  const kpis = useMemo(() => calculateMonthlyKpis(data), [data])
+
+  const replaceSiteVisit = (draft: SiteVisit, saved: SiteVisit) => {
+    setData((current) => ({
+      ...current,
+      siteVisits: current.siteVisits.map((siteVisit) => (siteVisit.id === draft.id ? saved : siteVisit)),
+    }))
+    setSelectedSiteVisit(saved)
+  }
+
+  const replaceTask = (draft: Task, saved: Task) => {
+    setData((current) => ({
+      ...current,
+      tasks: current.tasks.map((task) => (task.id === draft.id ? saved : task)),
+    }))
+  }
+
+  const handleAddSiteVisit = (input: NewSiteVisitInput) => {
+    const draft = createLocalSiteVisit(input, data.siteVisits.length + 1)
+    setData((current) => ({ ...current, siteVisits: [draft, ...current.siteVisits] }))
+    setSelectedSiteVisit(draft)
+
+    void saveSiteVisit(draft)
+      .then((saved) => {
+        replaceSiteVisit(draft, saved)
+        setNotice('Site visit saved.')
+      })
+      .catch((error: Error) => {
+        setNotice(`Site visit is kept locally for this session. Supabase save failed: ${error.message}`)
+      })
+  }
+
+  const handleAddTask = (input: NewTaskInput) => {
+    const draft = createLocalTask(input)
+    setData((current) => ({ ...current, tasks: [draft, ...current.tasks] }))
+
+    void saveTask(draft)
+      .then((saved) => {
+        replaceTask(draft, saved)
+        setNotice('Task saved.')
+      })
+      .catch((error: Error) => {
+        setNotice(`Task is kept locally for this session. Supabase save failed: ${error.message}`)
+      })
+  }
+
+  const renderPage = () => {
+    switch (activePage) {
+      case 'dashboard':
+        return (
+          <DashboardPage
+            data={data}
+            kpis={kpis}
+            monthLabel={monthRange.label}
+            searchQuery={searchQuery}
+            selectedSiteVisit={selectedSiteVisit}
+            onSearchChange={setSearchQuery}
+            onAddSiteVisit={handleAddSiteVisit}
+            onAddTask={handleAddTask}
+            onSelectSiteVisit={setSelectedSiteVisit}
+          />
+        )
+      case 'work':
+        return (
+          <WorkPage
+            data={data}
+            selectedSiteVisit={selectedSiteVisit}
+            onAddSiteVisit={handleAddSiteVisit}
+            onSelectSiteVisit={setSelectedSiteVisit}
+          />
+        )
+      case 'tasks':
+        return <TasksPage data={data} onAddTask={handleAddTask} />
+      case 'kpi':
+        return <KpiPage data={data} kpis={kpis} monthLabel={monthRange.label} />
+      case 'reports':
+        return (
+          <PlaceholderPage
+            eyebrow="Reports"
+            title="Reports"
+            description="Placeholder page for future report workflow work."
+            icon={<FileText size={32} />}
+          >
+            <h2>Report Foundation</h2>
+            <p>Site visit report records can be added in Prompt 2 without changing the navigation structure.</p>
+          </PlaceholderPage>
+        )
+      case 'settings':
+        return (
+          <PlaceholderPage
+            eyebrow="Settings"
+            title="Settings"
+            description="Placeholder page for app configuration."
+            icon={<Settings size={32} />}
+          >
+            <h2>Environment</h2>
+            <p>Use VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY when connecting this app to Supabase.</p>
+          </PlaceholderPage>
+        )
+      default:
+        return null
+    }
+  }
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
-
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
+    <AppShell activePage={activePage} notice={notice} onNavigate={setActivePage}>
+      {renderPage()}
+    </AppShell>
   )
 }
 
