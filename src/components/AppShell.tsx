@@ -7,10 +7,12 @@ type AppShellProps = {
   activePage: PageKey
   children: ReactNode
   notice: string
+  userEmail?: string | null
   onNavigate: (page: PageKey) => void
+  onLogout?: () => void
 }
 
-export function AppShell({ activePage, children, notice, onNavigate }: AppShellProps) {
+export function AppShell({ activePage, children, notice, userEmail = null, onNavigate, onLogout }: AppShellProps) {
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false)
   const navItems = useMemo<SidebarNavItem[]>(
     () => [
@@ -33,7 +35,13 @@ export function AppShell({ activePage, children, notice, onNavigate }: AppShellP
   return (
     <div className="app-shell">
       <div className="desktop-sidebar">
-        <Sidebar items={navItems} activePage={activePage} onNavigate={handleNavigate} />
+        <Sidebar
+          items={navItems}
+          activePage={activePage}
+          userEmail={userEmail}
+          onNavigate={handleNavigate}
+          onLogout={onLogout}
+        />
       </div>
 
       <div className="app-main">
@@ -70,7 +78,13 @@ export function AppShell({ activePage, children, notice, onNavigate }: AppShellP
             >
               <X size={22} />
             </button>
-            <Sidebar items={navItems} activePage={activePage} onNavigate={handleNavigate} />
+            <Sidebar
+              items={navItems}
+              activePage={activePage}
+              userEmail={userEmail}
+              onNavigate={handleNavigate}
+              onLogout={onLogout}
+            />
           </div>
         </div>
       ) : null}

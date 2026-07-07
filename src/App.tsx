@@ -1,7 +1,9 @@
 import { FileText, Settings } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { Session } from '@supabase/supabase-js'
 import './App.css'
 import { AppShell } from './components/AppShell'
+import { LoginPage } from './components/LoginPage'
 import { hasSupabaseConfig, supabase } from './lib/supabase'
 import {
   createLocalActivityTimelineItem,
@@ -58,6 +60,8 @@ const initialData: PerformanceData = {
 
 const quoteSentStatuses = new Set<QuoteStatus>(['Sent', 'Follow Up', 'Booked', 'Lost'])
 
+type AuthStatus = 'checking' | 'signed-out' | 'signed-in' | 'local'
+
 const formatToday = () => {
   const today = new Date()
   const year = today.getFullYear()
@@ -87,7 +91,11 @@ const createUpdatedQuote = (quote: Quote, status: QuoteStatus): Quote => ({
 function App() {
   const [activePage, setActivePage] = useState<PageKey>('dashboard')
   const [data, setData] = useState<PerformanceData>(initialData)
-  const [notice, setNotice] = useState('Loading performance data...')
+  const [notice, setNotice] = useState(() =>
+    hasSupabaseConfig ? 'Checking Supabase session...' : 'Loading performance data...',
+  )
+  const [authStatus, setAuthStatus] = useState<AuthStatus>(() => (hasSupabaseConfig ? 'checking' : 'local'))
+  const [session, setSession] = useState<Session | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedSiteVisit, setSelectedSiteVisit] = useState<SiteVisit | null>(null)
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
@@ -140,40 +148,139 @@ function App() {
       const message = `${label} was not saved to ${storageName}: ${error.message}`
 
       if (hasSupabaseConfig) {
+        if (error.message.toLowerCase().includes('sign in before saving')) {
+          setSession(null)
+          setAuthStatus('signed-out')
+          clearLoadedSessionData()
+          setNotice(message)
+          return
+        }
+
         void loadAppData(message)
         return
       }
 
       setNotice(message)
     },
+    [clearLoadedSessionData, loadAppData],
+  )
+
+  const handleSignedIn = useCallback(
+    (nextSession: Session) => {
+      setSession(nextSession)
+      setAuthStatus('signed-in')
+      setNotice('Signed in. Loading saved Supabase data...')
+      void loadAppData()
+    },
     [loadAppData],
   )
 
+  const handleLogout = useCallback(async () => {
+    if (!hasSupabaseConfig || !supabase) {
+      return
+    }
+
+    const { error } = await supabase.auth.signOut()
+
+    if (error) {
+      setNotice(`Sign out failed: ${error.message}`)
+      return
+    }
+
+    setSession(null)
+    setAuthStatus('signed-out')
+    clearLoadedSessionData()
+    setNotice('Signed out. Supabase records remain saved and will reload after sign in.')
+  }, [clearLoadedSessionData])
+
+  const ensureAuthenticatedForSupabaseSave = useCallback(() => {
+    if (!hasSupabaseConfig || session) {
+      return true
+    }
+
+    setAuthStatus('signed-out')
+    clearLoadedSessionData()
+    setNotice('Sign in before saving Supabase data.')
+    return false
+  }, [clearLoadedSessionData, session])
+
   useEffect(() => {
     isMountedRef.current = true
-    void loadAppData()
+
+    if (!hasSupabaseConfig || !supabase) {
+      setAuthStatus('local')
+      setSession(null)
+      void loadAppData()
+
+      return () => {
+        isMountedRef.current = false
+      }
+    }
+
+    const supabaseClient = supabase
+    let isActive = true
+
+    const initializeSession = async () => {
+      const { data: sessionData, error } = await supabaseClient.auth.getSession()
+
+      if (!isMountedRef.current || !isActive) {
+        return
+      }
+
+      if (error) {
+        setSession(null)
+        setAuthStatus('signed-out')
+        clearLoadedSessionData()
+        setNotice(`Supabase session could not be checked: ${error.message}`)
+        return
+      }
+
+      if (!sessionData.session) {
+        setSession(null)
+        setAuthStatus('signed-out')
+        clearLoadedSessionData()
+        setNotice('Sign in to load saved Supabase data.')
+        return
+      }
+
+      setSession(sessionData.session)
+      setAuthStatus('signed-in')
+      void loadAppData()
+    }
+
+    void initializeSession()
 
     return () => {
+      isActive = false
       isMountedRef.current = false
     }
-  }, [loadAppData])
+  }, [clearLoadedSessionData, loadAppData])
 
   useEffect(() => {
     if (!hasSupabaseConfig || !supabase) {
       return undefined
     }
 
+    const supabaseClient = supabase
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'SIGNED_OUT') {
+    } = supabaseClient.auth.onAuthStateChange((event, nextSession) => {
+      if (event === 'INITIAL_SESSION') {
+        return
+      }
+
+      if (event === 'SIGNED_OUT' || !nextSession) {
+        setSession(null)
+        setAuthStatus('signed-out')
         clearLoadedSessionData()
         setNotice('Signed out. Supabase records remain saved and will reload after sign in.')
         return
       }
 
       if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
-        void loadAppData()
+        setSession(nextSession)
+        setAuthStatus('signed-in')
+        void loadAppData(event === 'SIGNED_IN' ? 'Signed in. Supabase data loaded.' : undefined)
       }
     })
 
@@ -249,6 +356,10 @@ function App() {
   }
 
   const handleSaveKpiTargets = (targets: KpiTarget[]) => {
+    if (!ensureAuthenticatedForSupabaseSave()) {
+      return
+    }
+
     setKpiTargets(targets)
 
     void saveKpiTargets(targets)
@@ -263,6 +374,10 @@ function App() {
 
   const handleApplyBookingVerifications = (updates: BookingVerificationUpdate[]) => {
     if (!updates.length) {
+      return
+    }
+
+    if (!ensureAuthenticatedForSupabaseSave()) {
       return
     }
 
@@ -338,6 +453,10 @@ function App() {
       return
     }
 
+    if (!ensureAuthenticatedForSupabaseSave()) {
+      return
+    }
+
     const bookingIdSet = new Set(bookingIds)
     const now = new Date().toISOString()
     const updatedBookings = data.bookings
@@ -379,6 +498,10 @@ function App() {
   }
 
   const handleAddSiteVisit = (input: NewSiteVisitInput) => {
+    if (!ensureAuthenticatedForSupabaseSave()) {
+      return
+    }
+
     const draft = createLocalSiteVisit(input, data.siteVisits.length + 1)
     setData((current) => ({ ...current, siteVisits: [draft, ...current.siteVisits] }))
     setSelectedSiteVisit(draft)
@@ -394,6 +517,10 @@ function App() {
   }
 
   const handleUpdateSiteVisitStatus = (siteVisit: SiteVisit, status: SiteVisitStatus) => {
+    if (!ensureAuthenticatedForSupabaseSave()) {
+      return
+    }
+
     const updatedSiteVisit = { ...siteVisit, status, updated_at: new Date().toISOString() }
     const activity = createWorkflowActivity(
       'site_visits',
@@ -421,6 +548,10 @@ function App() {
   }
 
   const handleAddTask = (input: NewTaskInput) => {
+    if (!ensureAuthenticatedForSupabaseSave()) {
+      return
+    }
+
     const draft = createLocalTask(input)
     const taskCreatedActivity = createWorkflowActivity('tasks', draft.id, 'created', 'Task created', draft.title)
     const taskCompletedActivity =
@@ -445,6 +576,10 @@ function App() {
   }
 
   const handleUpdateTaskStatus = (task: Task, status: TaskStatus) => {
+    if (!ensureAuthenticatedForSupabaseSave()) {
+      return
+    }
+
     const updatedTask = { ...task, status, updated_at: new Date().toISOString() }
     const completionActivity =
       status === 'Completed' && task.status !== 'Completed'
@@ -468,6 +603,10 @@ function App() {
   }
 
   const handleCreateQuote = (input: NewQuoteInput, bookingInput: QuoteBookingInput | null) => {
+    if (!ensureAuthenticatedForSupabaseSave()) {
+      return
+    }
+
     if (input.status === 'Booked' && !bookingInput?.booking_number.trim()) {
       setNotice('A booking number is required before a quote can be marked Booked.')
       return
@@ -559,6 +698,10 @@ function App() {
   }
 
   const handleUpdateQuoteStatus = (quote: Quote, status: QuoteStatus) => {
+    if (!ensureAuthenticatedForSupabaseSave()) {
+      return
+    }
+
     if (status === 'Booked') {
       setNotice('Enter a booking number before marking a quote Booked.')
       return
@@ -621,6 +764,10 @@ function App() {
   }
 
   const handleBookQuote = (quote: Quote, bookingInput: QuoteBookingInput) => {
+    if (!ensureAuthenticatedForSupabaseSave()) {
+      return
+    }
+
     if (!bookingInput.booking_number.trim()) {
       setNotice('A booking number is required before a quote can be marked Booked.')
       return
@@ -716,6 +863,10 @@ function App() {
   }
 
   const handleCreateManualBooking = (input: NewBookingInput) => {
+    if (!ensureAuthenticatedForSupabaseSave()) {
+      return
+    }
+
     const draft = createLocalBooking(input)
     const activity = createWorkflowActivity(
       'bookings',
@@ -881,8 +1032,35 @@ function App() {
     }
   }
 
+  if (hasSupabaseConfig && authStatus === 'checking') {
+    return (
+      <main className="auth-screen">
+        <section className="auth-panel auth-panel--status" aria-live="polite">
+          <div className="auth-panel__brand" aria-hidden="true">
+            <span>SP</span>
+          </div>
+          <div className="auth-panel__header">
+            <p className="eyebrow">Smart Performance</p>
+            <h1>Checking session</h1>
+            <p>Connecting to Supabase before loading saved performance data.</p>
+          </div>
+        </section>
+      </main>
+    )
+  }
+
+  if (hasSupabaseConfig && authStatus !== 'signed-in') {
+    return <LoginPage onSignedIn={handleSignedIn} />
+  }
+
   return (
-    <AppShell activePage={activePage} notice={notice} onNavigate={setActivePage}>
+    <AppShell
+      activePage={activePage}
+      notice={notice}
+      userEmail={session?.user.email ?? null}
+      onNavigate={setActivePage}
+      onLogout={hasSupabaseConfig ? handleLogout : undefined}
+    >
       {renderPage()}
     </AppShell>
   )

@@ -1,5 +1,5 @@
 import { createDemoPerformanceData } from '../data/demoData'
-import { hasSupabaseConfig, supabase } from '../lib/supabase'
+import { hasSupabaseConfig, supabase, supabaseConfigError } from '../lib/supabase'
 import type {
   ActivityTimelineItem,
   Booking,
@@ -187,13 +187,14 @@ export function buildBookingReference(sequence: number) {
 export async function loadPerformanceData(): Promise<PerformanceDataResult> {
   if (!hasSupabaseConfig || !supabase) {
     const localData = readLocalPerformanceData()
+    const configNotice = supabaseConfigError ?? 'Missing Supabase configuration.'
 
     return {
       data: localData ?? createDemoPerformanceData(),
       source: localData ? 'local' : 'demo',
       notice: localData
-        ? 'Supabase env vars are not configured, so browser-local development data is showing.'
-        : 'Supabase env vars are not configured, so demo data is showing. New changes will persist in this browser.',
+        ? `${configNotice} Browser-local development data is showing.`
+        : `${configNotice} Demo data is showing. New changes will persist in this browser.`,
     }
   }
 

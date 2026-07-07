@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { LogOut } from 'lucide-react'
 import type { PageKey } from '../types/performance'
 
 export type SidebarNavItem = {
@@ -10,10 +11,12 @@ export type SidebarNavItem = {
 type SidebarProps = {
   items: SidebarNavItem[]
   activePage: PageKey
+  userEmail?: string | null
   onNavigate: (page: PageKey) => void
+  onLogout?: () => void
 }
 
-export function Sidebar({ items, activePage, onNavigate }: SidebarProps) {
+export function Sidebar({ items, activePage, userEmail = null, onNavigate, onLogout }: SidebarProps) {
   return (
     <aside className="sidebar" aria-label="Primary navigation">
       <div className="sidebar__brand">
@@ -36,6 +39,21 @@ export function Sidebar({ items, activePage, onNavigate }: SidebarProps) {
           </button>
         ))}
       </nav>
+
+      {onLogout ? (
+        <div className="sidebar__footer">
+          {userEmail ? (
+            <div className="sidebar__session">
+              <span>Signed in</span>
+              <strong>{userEmail}</strong>
+            </div>
+          ) : null}
+          <button className="sidebar__logout" type="button" onClick={onLogout}>
+            <LogOut size={18} aria-hidden="true" />
+            Log out
+          </button>
+        </div>
+      ) : null}
     </aside>
   )
 }
