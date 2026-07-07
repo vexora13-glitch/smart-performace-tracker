@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
+    "test": "node --experimental-strip-types --test tests/siteVisitTextParser.test.mjs tests/kpiTargets.test.mjs",
     "test:analyzer": "node --experimental-strip-types tests/siteVisitTextParser.test.mjs",
     "preview": "vite preview"
   },

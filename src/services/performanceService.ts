@@ -164,6 +164,7 @@ export function createLocalSiteVisit(input: NewSiteVisitInput, sequence: number)
     contact_person: cleanText(input.contact_person),
     contact_number: input.contact_number.trim(),
     email: cleanText(input.email),
+    job_id: cleanText(input.job_id),
     address: cleanText(input.address),
     suburb: input.suburb.trim(),
     booked_date: input.booked_date,
