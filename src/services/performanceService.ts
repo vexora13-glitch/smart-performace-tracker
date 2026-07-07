@@ -17,7 +17,7 @@ import { createDefaultKpiTargets, mergeKpiTargets } from '../utils/kpiTargets'
 
 export type PerformanceDataResult = {
   data: PerformanceData
-  source: 'supabase' | 'demo'
+  source: 'supabase' | 'demo' | 'local'
   notice: string
 }
 
@@ -32,6 +32,125 @@ const emptyData: PerformanceData = {
   bookings: [],
   tasks: [],
   activityTimeline: [],
+}
+
+const localPerformanceDataKey = 'smart-performance-tracker:performance-data:v1'
+const localKpiTargetsKey = 'smart-performance-tracker:kpi-targets:v1'
+
+function getLocalStorage() {
+  return typeof globalThis.localStorage === 'undefined' ? null : globalThis.localStorage
+}
+
+function readLocalJson<T>(key: string): T | null {
+  const storage = getLocalStorage()
+
+  if (!storage) {
+    return null
+  }
+
+  const rawValue = storage.getItem(key)
+
+  if (!rawValue) {
+    return null
+  }
+
+  try {
+    return JSON.parse(rawValue) as T
+  } catch {
+    return null
+  }
+}
+
+function writeLocalJson(key: string, value: unknown) {
+  const storage = getLocalStorage()
+
+  if (!storage) {
+    throw new Error('Browser local storage is not available.')
+  }
+
+  storage.setItem(key, JSON.stringify(value))
+}
+
+function normalizeLocalPerformanceData(value: unknown): PerformanceData | null {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const record = value as Partial<Record<keyof PerformanceData, unknown>>
+
+  return {
+    siteVisits: Array.isArray(record.siteVisits) ? (record.siteVisits as SiteVisit[]) : [],
+    quotes: Array.isArray(record.quotes) ? (record.quotes as Quote[]) : [],
+    bookings: Array.isArray(record.bookings) ? (record.bookings as Booking[]) : [],
+    tasks: Array.isArray(record.tasks) ? (record.tasks as Task[]) : [],
+    activityTimeline: Array.isArray(record.activityTimeline)
+      ? (record.activityTimeline as ActivityTimelineItem[])
+      : [],
+  }
+}
+
+function readLocalPerformanceData() {
+  return normalizeLocalPerformanceData(readLocalJson(localPerformanceDataKey))
+}
+
+function loadLocalPerformanceData() {
+  return readLocalPerformanceData() ?? createDemoPerformanceData()
+}
+
+function persistLocalPerformanceData(updater: (current: PerformanceData) => PerformanceData) {
+  const nextData = updater(loadLocalPerformanceData())
+  writeLocalJson(localPerformanceDataKey, nextData)
+  return nextData
+}
+
+function saveLocalPerformanceRecord<K extends keyof Pick<PerformanceData, 'siteVisits' | 'quotes' | 'bookings' | 'tasks'>>(
+  collectionKey: K,
+  record: PerformanceData[K][number],
+) {
+  persistLocalPerformanceData((current) => ({
+    ...current,
+    [collectionKey]: [record, ...current[collectionKey]],
+  }))
+
+  return record
+}
+
+function updateLocalPerformanceRecord<K extends keyof Pick<PerformanceData, 'siteVisits' | 'quotes' | 'bookings' | 'tasks'>>(
+  collectionKey: K,
+  record: PerformanceData[K][number],
+) {
+  persistLocalPerformanceData((current) => ({
+    ...current,
+    [collectionKey]: current[collectionKey].map((currentRecord) =>
+      currentRecord.id === record.id ? record : currentRecord,
+    ) as PerformanceData[K],
+  }))
+
+  return record
+}
+
+export async function getActiveSupabaseUserId(): Promise<string | null> {
+  if (!hasSupabaseConfig || !supabase) {
+    return null
+  }
+
+  const { data, error } = await supabase.auth.getSession()
+
+  if (error) {
+    throw new Error(error.message)
+  }
+
+  return data.session?.user.id ?? null
+}
+
+async function requireActiveSupabaseUserId() {
+  const userId = await getActiveSupabaseUserId()
+
+  if (!userId) {
+    throw new Error('Sign in before saving Supabase data.')
+  }
+
+  return userId
 }
 
 function createId() {
@@ -67,19 +186,38 @@ export function buildBookingReference(sequence: number) {
 
 export async function loadPerformanceData(): Promise<PerformanceDataResult> {
   if (!hasSupabaseConfig || !supabase) {
+    const localData = readLocalPerformanceData()
+
     return {
-      data: createDemoPerformanceData(),
-      source: 'demo',
-      notice: 'Supabase env vars are not configured, so demo data is showing.',
+      data: localData ?? createDemoPerformanceData(),
+      source: localData ? 'local' : 'demo',
+      notice: localData
+        ? 'Supabase env vars are not configured, so browser-local development data is showing.'
+        : 'Supabase env vars are not configured, so demo data is showing. New changes will persist in this browser.',
+    }
+  }
+
+  const ownerUserId = await getActiveSupabaseUserId()
+
+  if (!ownerUserId) {
+    return {
+      data: emptyData,
+      source: 'supabase',
+      notice: 'Supabase is configured. Sign in to load saved performance data.',
     }
   }
 
   const [siteVisitsResult, quotesResult, bookingsResult, tasksResult, activityTimelineResult] = await Promise.all([
-    supabase.from('site_visits').select('*').order('booked_date', { ascending: true }),
-    supabase.from('quotes').select('*').order('quote_sent_date', { ascending: false }),
-    supabase.from('bookings').select('*').order('booking_date', { ascending: false }),
-    supabase.from('tasks').select('*').order('due_date', { ascending: true }),
-    supabase.from('activity_timeline').select('*').order('created_at', { ascending: false }).limit(100),
+    supabase.from('site_visits').select('*').eq('owner_user_id', ownerUserId).order('booked_date', { ascending: true }),
+    supabase.from('quotes').select('*').eq('owner_user_id', ownerUserId).order('quote_sent_date', { ascending: false }),
+    supabase.from('bookings').select('*').eq('owner_user_id', ownerUserId).order('booking_date', { ascending: false }),
+    supabase.from('tasks').select('*').eq('owner_user_id', ownerUserId).order('due_date', { ascending: true }),
+    supabase
+      .from('activity_timeline')
+      .select('*')
+      .eq('owner_user_id', ownerUserId)
+      .order('created_at', { ascending: false })
+      .limit(100),
   ])
 
   const failedResult = [siteVisitsResult, quotesResult, bookingsResult, tasksResult, activityTimelineResult].find(
@@ -88,9 +226,9 @@ export async function loadPerformanceData(): Promise<PerformanceDataResult> {
 
   if (failedResult?.error) {
     return {
-      data: createDemoPerformanceData(),
-      source: 'demo',
-      notice: `Supabase request failed, so demo data is showing: ${failedResult.error.message}`,
+      data: emptyData,
+      source: 'supabase',
+      notice: `Supabase request failed. Saved data was not replaced with demo data: ${failedResult.error.message}`,
     }
   }
 
@@ -111,6 +249,17 @@ export async function loadKpiTargets(): Promise<KpiTargetsResult> {
   const defaults = createDefaultKpiTargets()
 
   if (!hasSupabaseConfig || !supabase) {
+    const localTargets = readLocalJson<KpiTarget[]>(localKpiTargetsKey)
+
+    return {
+      targets: localTargets ? mergeKpiTargets(localTargets) : defaults,
+      notice: '',
+    }
+  }
+
+  const ownerUserId = await getActiveSupabaseUserId()
+
+  if (!ownerUserId) {
     return {
       targets: defaults,
       notice: '',
@@ -120,6 +269,7 @@ export async function loadKpiTargets(): Promise<KpiTargetsResult> {
   const { data, error } = await supabase
     .from('kpi_targets')
     .select('*')
+    .eq('owner_user_id', ownerUserId)
     .eq('period_type', 'monthly')
     .eq('is_active', true)
 
@@ -137,14 +287,27 @@ export async function loadKpiTargets(): Promise<KpiTargetsResult> {
 }
 
 export async function saveKpiTargets(targets: KpiTarget[]): Promise<KpiTarget[]> {
+  if (!hasSupabaseConfig || !supabase) {
+    const savedTargets = mergeKpiTargets(targets)
+    writeLocalJson(localKpiTargetsKey, savedTargets)
+    return savedTargets
+  }
+
+  const ownerUserId = await requireActiveSupabaseUserId()
+
   if (!supabase) {
     return targets
   }
 
-  const payload = targets.map(({ id: _id, created_at: _createdAt, updated_at: _updatedAt, ...target }) => target)
+  const payload = targets.map(
+    ({ id: _id, created_at: _createdAt, updated_at: _updatedAt, owner_user_id: _ownerUserId, ...target }) => ({
+      ...target,
+      owner_user_id: ownerUserId,
+    }),
+  )
   const { data, error } = await supabase
     .from('kpi_targets')
-    .upsert(payload, { onConflict: 'kpi_key,period_type' })
+    .upsert(payload, { onConflict: 'owner_user_id,kpi_key,period_type' })
     .select('*')
 
   if (error) {
@@ -164,6 +327,7 @@ export function createLocalSiteVisit(input: NewSiteVisitInput, sequence: number)
     contact_person: cleanText(input.contact_person),
     contact_number: input.contact_number.trim(),
     email: cleanText(input.email),
+    owner_user_id: null,
     job_id: cleanText(input.job_id),
     address: cleanText(input.address),
     suburb: input.suburb.trim(),
@@ -179,12 +343,17 @@ export function createLocalSiteVisit(input: NewSiteVisitInput, sequence: number)
 }
 
 export async function saveSiteVisit(siteVisit: SiteVisit): Promise<SiteVisit> {
-  if (!supabase) {
-    return siteVisit
+  if (!hasSupabaseConfig || !supabase) {
+    return saveLocalPerformanceRecord('siteVisits', siteVisit) as SiteVisit
   }
 
-  const { id: _id, created_at: _createdAt, updated_at: _updatedAt, ...insertPayload } = siteVisit
-  const { data, error } = await supabase.from('site_visits').insert(insertPayload).select('*').single()
+  const ownerUserId = await requireActiveSupabaseUserId()
+  const { id: _id, created_at: _createdAt, updated_at: _updatedAt, owner_user_id: _ownerUserId, ...insertPayload } = siteVisit
+  const { data, error } = await supabase
+    .from('site_visits')
+    .insert({ ...insertPayload, owner_user_id: ownerUserId })
+    .select('*')
+    .single()
 
   if (error) {
     throw new Error(error.message)
@@ -194,12 +363,19 @@ export async function saveSiteVisit(siteVisit: SiteVisit): Promise<SiteVisit> {
 }
 
 export async function updateSiteVisit(siteVisit: SiteVisit): Promise<SiteVisit> {
-  if (!supabase) {
-    return siteVisit
+  if (!hasSupabaseConfig || !supabase) {
+    return updateLocalPerformanceRecord('siteVisits', siteVisit) as SiteVisit
   }
 
-  const { id, created_at: _createdAt, updated_at: _updatedAt, ...updatePayload } = siteVisit
-  const { data, error } = await supabase.from('site_visits').update(updatePayload).eq('id', id).select('*').single()
+  const ownerUserId = await requireActiveSupabaseUserId()
+  const { id, created_at: _createdAt, updated_at: _updatedAt, owner_user_id: _ownerUserId, ...updatePayload } = siteVisit
+  const { data, error } = await supabase
+    .from('site_visits')
+    .update({ ...updatePayload, owner_user_id: ownerUserId })
+    .eq('id', id)
+    .eq('owner_user_id', ownerUserId)
+    .select('*')
+    .single()
 
   if (error) {
     throw new Error(error.message)
@@ -217,6 +393,7 @@ export function createLocalQuote(input: NewQuoteInput, sequence: number): Quote 
     site_visit_id: input.site_visit_id,
     quote_reference: quoteReference,
     customer_full_name: input.customer_full_name.trim(),
+    owner_user_id: null,
     quote_value: cleanMoneyValue(input.quote_value),
     quote_sent_date: input.quote_sent_date,
     status: input.status,
@@ -226,12 +403,17 @@ export function createLocalQuote(input: NewQuoteInput, sequence: number): Quote 
 }
 
 export async function saveQuote(quote: Quote): Promise<Quote> {
-  if (!supabase) {
-    return quote
+  if (!hasSupabaseConfig || !supabase) {
+    return saveLocalPerformanceRecord('quotes', quote) as Quote
   }
 
-  const { id: _id, created_at: _createdAt, updated_at: _updatedAt, ...insertPayload } = quote
-  const { data, error } = await supabase.from('quotes').insert(insertPayload).select('*').single()
+  const ownerUserId = await requireActiveSupabaseUserId()
+  const { id: _id, created_at: _createdAt, updated_at: _updatedAt, owner_user_id: _ownerUserId, ...insertPayload } = quote
+  const { data, error } = await supabase
+    .from('quotes')
+    .insert({ ...insertPayload, owner_user_id: ownerUserId })
+    .select('*')
+    .single()
 
   if (error) {
     throw new Error(error.message)
@@ -241,12 +423,19 @@ export async function saveQuote(quote: Quote): Promise<Quote> {
 }
 
 export async function updateQuote(quote: Quote): Promise<Quote> {
-  if (!supabase) {
-    return quote
+  if (!hasSupabaseConfig || !supabase) {
+    return updateLocalPerformanceRecord('quotes', quote) as Quote
   }
 
-  const { id, created_at: _createdAt, updated_at: _updatedAt, ...updatePayload } = quote
-  const { data, error } = await supabase.from('quotes').update(updatePayload).eq('id', id).select('*').single()
+  const ownerUserId = await requireActiveSupabaseUserId()
+  const { id, created_at: _createdAt, updated_at: _updatedAt, owner_user_id: _ownerUserId, ...updatePayload } = quote
+  const { data, error } = await supabase
+    .from('quotes')
+    .update({ ...updatePayload, owner_user_id: ownerUserId })
+    .eq('id', id)
+    .eq('owner_user_id', ownerUserId)
+    .select('*')
+    .single()
 
   if (error) {
     throw new Error(error.message)
@@ -262,6 +451,7 @@ export function createLocalBooking(input: NewBookingInput): Booking {
     id: createId(),
     site_visit_id: input.site_visit_id,
     quote_id: input.quote_id,
+    owner_user_id: null,
     booking_number: input.booking_number.trim(),
     customer_full_name: input.customer_full_name.trim(),
     booking_date: input.booking_date,
@@ -277,12 +467,17 @@ export function createLocalBooking(input: NewBookingInput): Booking {
 }
 
 export async function saveBooking(booking: Booking): Promise<Booking> {
-  if (!supabase) {
-    return booking
+  if (!hasSupabaseConfig || !supabase) {
+    return saveLocalPerformanceRecord('bookings', booking) as Booking
   }
 
-  const { id: _id, created_at: _createdAt, updated_at: _updatedAt, ...insertPayload } = booking
-  const { data, error } = await supabase.from('bookings').insert(insertPayload).select('*').single()
+  const ownerUserId = await requireActiveSupabaseUserId()
+  const { id: _id, created_at: _createdAt, updated_at: _updatedAt, owner_user_id: _ownerUserId, ...insertPayload } = booking
+  const { data, error } = await supabase
+    .from('bookings')
+    .insert({ ...insertPayload, owner_user_id: ownerUserId })
+    .select('*')
+    .single()
 
   if (error) {
     throw new Error(error.message)
@@ -292,12 +487,19 @@ export async function saveBooking(booking: Booking): Promise<Booking> {
 }
 
 export async function updateBooking(booking: Booking): Promise<Booking> {
-  if (!supabase) {
-    return booking
+  if (!hasSupabaseConfig || !supabase) {
+    return updateLocalPerformanceRecord('bookings', booking) as Booking
   }
 
-  const { id, created_at: _createdAt, updated_at: _updatedAt, ...updatePayload } = booking
-  const { data, error } = await supabase.from('bookings').update(updatePayload).eq('id', id).select('*').single()
+  const ownerUserId = await requireActiveSupabaseUserId()
+  const { id, created_at: _createdAt, updated_at: _updatedAt, owner_user_id: _ownerUserId, ...updatePayload } = booking
+  const { data, error } = await supabase
+    .from('bookings')
+    .update({ ...updatePayload, owner_user_id: ownerUserId })
+    .eq('id', id)
+    .eq('owner_user_id', ownerUserId)
+    .select('*')
+    .single()
 
   if (error) {
     throw new Error(error.message)
@@ -312,6 +514,7 @@ export function createLocalTask(input: NewTaskInput): Task {
   return {
     id: createId(),
     site_visit_id: input.site_visit_id,
+    owner_user_id: null,
     title: input.title.trim(),
     description: cleanText(input.description),
     due_date: input.due_date,
@@ -323,12 +526,17 @@ export function createLocalTask(input: NewTaskInput): Task {
 }
 
 export async function saveTask(task: Task): Promise<Task> {
-  if (!supabase) {
-    return task
+  if (!hasSupabaseConfig || !supabase) {
+    return saveLocalPerformanceRecord('tasks', task) as Task
   }
 
-  const { id: _id, created_at: _createdAt, updated_at: _updatedAt, ...insertPayload } = task
-  const { data, error } = await supabase.from('tasks').insert(insertPayload).select('*').single()
+  const ownerUserId = await requireActiveSupabaseUserId()
+  const { id: _id, created_at: _createdAt, updated_at: _updatedAt, owner_user_id: _ownerUserId, ...insertPayload } = task
+  const { data, error } = await supabase
+    .from('tasks')
+    .insert({ ...insertPayload, owner_user_id: ownerUserId })
+    .select('*')
+    .single()
 
   if (error) {
     throw new Error(error.message)
@@ -338,12 +546,19 @@ export async function saveTask(task: Task): Promise<Task> {
 }
 
 export async function updateTask(task: Task): Promise<Task> {
-  if (!supabase) {
-    return task
+  if (!hasSupabaseConfig || !supabase) {
+    return updateLocalPerformanceRecord('tasks', task) as Task
   }
 
-  const { id, created_at: _createdAt, updated_at: _updatedAt, ...updatePayload } = task
-  const { data, error } = await supabase.from('tasks').update(updatePayload).eq('id', id).select('*').single()
+  const ownerUserId = await requireActiveSupabaseUserId()
+  const { id, created_at: _createdAt, updated_at: _updatedAt, owner_user_id: _ownerUserId, ...updatePayload } = task
+  const { data, error } = await supabase
+    .from('tasks')
+    .update({ ...updatePayload, owner_user_id: ownerUserId })
+    .eq('id', id)
+    .eq('owner_user_id', ownerUserId)
+    .select('*')
+    .single()
 
   if (error) {
     throw new Error(error.message)
@@ -361,6 +576,7 @@ export function createLocalActivityTimelineItem(
 ): ActivityTimelineItem {
   return {
     id: createId(),
+    owner_user_id: null,
     entity_type: entityType,
     entity_id: entityId,
     event_type: eventType,

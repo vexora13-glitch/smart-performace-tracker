@@ -1,0 +1,95 @@
+warning: in the working copy of 'src/pages/DashboardPage.tsx', LF will be replaced by CRLF the next time Git touches it
+[1mdiff --git a/src/pages/DashboardPage.tsx b/src/pages/DashboardPage.tsx[m
+[1mindex 5c98154..a82d1fd 100644[m
+[1m--- a/src/pages/DashboardPage.tsx[m
+[1m+++ b/src/pages/DashboardPage.tsx[m
+[36m@@ -1,5 +1,5 @@[m
+[31m-import { CalendarPlus, ClipboardList, ListPlus, Phone, SearchX } from 'lucide-react'[m
+[31m-import { useMemo, useState } from 'react'[m
+[32m+[m[32mimport { CalendarPlus, ClipboardList, ListPlus, Phone, SearchX, Sparkles } from 'lucide-react'[m
+[32m+[m[32mimport { useMemo, useRef, useState } from 'react'[m
+ import { DataTable, type DataTableColumn } from '../components/DataTable'[m
+ import { EmptyState } from '../components/EmptyState'[m
+ import { KpiSummaryGrid } from '../components/KpiSummaryGrid'[m
+[36m@@ -10,6 +10,7 @@[m [mimport { QuickActionButton } from '../components/QuickActionButton'[m
+ import { SearchInput } from '../components/SearchInput'[m
+ import { SiteVisitDetailPanel } from '../components/SiteVisitDetailPanel'[m
+ import { SiteVisitForm } from '../components/SiteVisitForm'[m
+[32m+[m[32mimport { SiteVisitTextAnalyzerModal } from '../components/SiteVisitTextAnalyzerModal'[m
+ import { StatusPill } from '../components/StatusPill'[m
+ import { TaskForm } from '../components/TaskForm'[m
+ import type {[m
+[36m@@ -28,6 +29,7 @@[m [mimport type {[m
+   Task,[m
+   TaskStatus,[m
+ } from '../types/performance'[m
+[32m+[m[32mimport type { SiteVisitPrefillOutcome, SiteVisitPrefillRequest, SiteVisitTextAnalysis } from '../types/siteVisitAnalyzer'[m
+ import { formatDateTime, sortSiteVisitsBySchedule } from '../utils/kpi'[m
+ import { searchPerformanceData, type SearchResult } from '../utils/search'[m
+ [m
+[36m@@ -77,6 +79,10 @@[m [mexport function DashboardPage({[m
+   onBookQuote,[m
+ }: DashboardPageProps) {[m
+   const [showManualBookingForm, setShowManualBookingForm] = useState(false)[m
+[32m+[m[32m  const [showTextAnalyzer, setShowTextAnalyzer] = useState(false)[m
+[32m+[m[32m  const [siteVisitPrefillRequest, setSiteVisitPrefillRequest] = useState<SiteVisitPrefillRequest | null>(null)[m
+[32m+[m[32m  const [siteVisitPrefillOutcome, setSiteVisitPrefillOutcome] = useState<SiteVisitPrefillOutcome | null>(null)[m
+[32m+[m[32m  const prefillRequestIdRef = useRef(0)[m
+   const bookedSiteVisits = useMemo([m
+     () => sortSiteVisitsBySchedule(data.siteVisits.filter((siteVisit) => siteVisit.status === 'Booked')),[m
+     [data.siteVisits],[m
+[36m@@ -119,6 +125,12 @@[m [mexport function DashboardPage({[m
+     { key: 'status', header: 'Status', render: (siteVisit) => <StatusPill status={siteVisit.status} /> },[m
+   ][m
+ [m
+[32m+[m[32m  const handleApplyTextAnalysis = (analysis: SiteVisitTextAnalysis) => {[m
+[32m+[m[32m    prefillRequestIdRef.current += 1[m
+[32m+[m[32m    setSiteVisitPrefillOutcome(null)[m
+[32m+[m[32m    setSiteVisitPrefillRequest({ id: prefillRequestIdRef.current, analysis })[m
+[32m+[m[32m  }[m
+[32m+[m
+   return ([m
+     <div className="page-stack">[m
+       <header className="page-header">[m
+[36m@@ -138,7 +150,7 @@[m [mexport function DashboardPage({[m
+       <SearchInput[m
+         value={searchQuery}[m
+         onChange={onSearchChange}[m
+[31m-        placeholder="Search site visits, customers, suburbs, phone numbers, or tasks"[m
+[32m+[m[32m        placeholder="Search site visits, job IDs, customers, suburbs, phone numbers, or tasks"[m
+       />[m
+ [m
+       {searchQuery.trim() ? ([m
+[36m@@ -210,8 +222,16 @@[m [mexport function DashboardPage({[m
+               <span className="eyebrow">Work</span>[m
+               <h2>Quick Site Visit Booking</h2>[m
+             </div>[m
+[32m+[m[32m            <button className="secondary-button" type="button" onClick={() => setShowTextAnalyzer(true)}>[m
+[32m+[m[32m              <Sparkles size={16} aria-hidden="true" />[m
+[32m+[m[32m              AI Text Analyzer[m
+[32m+[m[32m            </button>[m
+           </div>[m
+[31m-          <SiteVisitForm onSubmit={onAddSiteVisit} />[m
+[32m+[m[32m          <SiteVisitForm[m
+[32m+[m[32m            prefillRequest={siteVisitPrefillRequest}[m
+[32m+[m[32m            onPrefillApplied={setSiteVisitPrefillOutcome}[m
+[32m+[m[32m            onSubmit={onAddSiteVisit}[m
+[32m+[m[32m          />[m
+         </div>[m
+ [m
+         <div className="surface" id="quick-task">[m
+[36m@@ -298,6 +318,14 @@[m [mexport function DashboardPage({[m
+           </div>[m
+         )}[m
+       </section>[m
+[32m+[m
+[32m+[m[32m      <SiteVisitTextAnalyzerModal[m
+[32m+[m[32m        isOpen={showTextAnalyzer}[m
+[32m+[m[32m        prefillOutcome={siteVisitPrefillOutcome}[m
+[32m+[m[32m        onApply={handleApplyTextAnalysis}[m
+[32m+[m[32m        onClose={() => setShowTextAnalyzer(false)}[m
+[32m+[m[32m        onResetPrefillOutcome={() => setSiteVisitPrefillOutcome(null)}[m
+[32m+[m[32m      />[m
+     </div>[m
+   )[m
+ }[m

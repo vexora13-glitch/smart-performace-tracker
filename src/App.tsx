@@ -1,7 +1,8 @@
 import { FileText, Settings } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import { AppShell } from './components/AppShell'
+import { hasSupabaseConfig, supabase } from './lib/supabase'
 import {
   createLocalActivityTimelineItem,
   createLocalBooking,
@@ -94,29 +95,92 @@ function App() {
   const [selectedQuoteId, setSelectedQuoteId] = useState<string | null>(null)
   const [selectedMonth, setSelectedMonth] = useState(() => new Date())
   const [kpiTargets, setKpiTargets] = useState<KpiTarget[]>(() => createDefaultKpiTargets())
+  const isMountedRef = useRef(true)
 
-  useEffect(() => {
-    let isMounted = true
+  const clearLoadedSessionData = useCallback(() => {
+    setData(initialData)
+    setKpiTargets(createDefaultKpiTargets())
+    setSelectedSiteVisit(null)
+    setSelectedTaskId(null)
+    setSelectedBookingId(null)
+    setSelectedQuoteId(null)
+  }, [])
 
-    async function loadData() {
+  const loadAppData = useCallback(async (noticeOverride?: string) => {
+    try {
       const [performanceResult, targetsResult] = await Promise.all([loadPerformanceData(), loadKpiTargets()])
 
-      if (!isMounted) {
+      if (!isMountedRef.current) {
         return
       }
 
       setData(performanceResult.data)
       setKpiTargets(targetsResult.targets)
-      setNotice([performanceResult.notice, targetsResult.notice].filter(Boolean).join(' '))
+      setNotice(noticeOverride ?? [performanceResult.notice, targetsResult.notice].filter(Boolean).join(' '))
       setSelectedSiteVisit(performanceResult.data.siteVisits[0] ?? null)
-    }
+      setSelectedTaskId(null)
+      setSelectedBookingId(null)
+      setSelectedQuoteId(null)
+    } catch (error) {
+      if (!isMountedRef.current) {
+        return
+      }
 
-    void loadData()
+      if (hasSupabaseConfig) {
+        clearLoadedSessionData()
+      }
+
+      setNotice(error instanceof Error ? `Saved data could not be loaded: ${error.message}` : 'Saved data could not be loaded.')
+    }
+  }, [clearLoadedSessionData])
+
+  const handlePersistenceFailure = useCallback(
+    (label: string, error: Error) => {
+      const storageName = hasSupabaseConfig ? 'Supabase' : 'local browser storage'
+      const message = `${label} was not saved to ${storageName}: ${error.message}`
+
+      if (hasSupabaseConfig) {
+        void loadAppData(message)
+        return
+      }
+
+      setNotice(message)
+    },
+    [loadAppData],
+  )
+
+  useEffect(() => {
+    isMountedRef.current = true
+    void loadAppData()
 
     return () => {
-      isMounted = false
+      isMountedRef.current = false
     }
-  }, [])
+  }, [loadAppData])
+
+  useEffect(() => {
+    if (!hasSupabaseConfig || !supabase) {
+      return undefined
+    }
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_OUT') {
+        clearLoadedSessionData()
+        setNotice('Signed out. Supabase records remain saved and will reload after sign in.')
+        return
+      }
+
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
+        void loadAppData()
+      }
+    })
+
+    return () => {
+      subscription.unsubscribe()
+    }
+  }, [clearLoadedSessionData, loadAppData])
 
   const monthRange = useMemo(() => getMonthRange(selectedMonth), [selectedMonth])
   const kpis = useMemo(() => calculateMonthlyKpis(data, selectedMonth), [data, selectedMonth])
@@ -193,7 +257,7 @@ function App() {
         setNotice('KPI targets saved.')
       })
       .catch((error: Error) => {
-        setNotice(`KPI targets are kept locally for this session. Supabase save failed: ${error.message}`)
+        handlePersistenceFailure('KPI targets', error)
       })
   }
 
@@ -265,7 +329,7 @@ function App() {
         setNotice(`${savedBookings.length} booking verification update${savedBookings.length === 1 ? '' : 's'} applied.`)
       })
       .catch((error: Error) => {
-        setNotice(`Booking verification is kept locally for this session. Supabase update failed: ${error.message}`)
+        handlePersistenceFailure('Booking verification', error)
       })
   }
 
@@ -310,7 +374,7 @@ function App() {
         setNotice(`${savedBookings.length} booking${savedBookings.length === 1 ? '' : 's'} marked Not Found.`)
       })
       .catch((error: Error) => {
-        setNotice(`Not Found status is kept locally for this session. Supabase update failed: ${error.message}`)
+        handlePersistenceFailure('Not Found booking status', error)
       })
   }
 
@@ -325,7 +389,7 @@ function App() {
         setNotice('Site visit saved.')
       })
       .catch((error: Error) => {
-        setNotice(`Site visit is kept locally for this session. Supabase save failed: ${error.message}`)
+        handlePersistenceFailure('Site visit', error)
       })
   }
 
@@ -352,7 +416,7 @@ function App() {
         setNotice('Site visit status updated.')
       })
       .catch((error: Error) => {
-        setNotice(`Site visit status is kept locally for this session. Supabase update failed: ${error.message}`)
+        handlePersistenceFailure('Site visit status', error)
       })
   }
 
@@ -376,7 +440,7 @@ function App() {
         setNotice('Task saved.')
       })
       .catch((error: Error) => {
-        setNotice(`Task is kept locally for this session. Supabase save failed: ${error.message}`)
+        handlePersistenceFailure('Task', error)
       })
   }
 
@@ -399,7 +463,7 @@ function App() {
         setNotice('Task status updated.')
       })
       .catch((error: Error) => {
-        setNotice(`Task status is kept locally for this session. Supabase update failed: ${error.message}`)
+        handlePersistenceFailure('Task status', error)
       })
   }
 
@@ -490,7 +554,7 @@ function App() {
         setNotice(draftBooking ? 'Quote booked and booking saved.' : 'Quote saved.')
       })
       .catch((error: Error) => {
-        setNotice(`Quote workflow is kept locally for this session. Supabase save failed: ${error.message}`)
+        handlePersistenceFailure('Quote workflow', error)
       })
   }
 
@@ -552,7 +616,7 @@ function App() {
         setNotice('Quote status updated.')
       })
       .catch((error: Error) => {
-        setNotice(`Quote status is kept locally for this session. Supabase update failed: ${error.message}`)
+        handlePersistenceFailure('Quote status', error)
       })
   }
 
@@ -647,7 +711,7 @@ function App() {
         setNotice('Quote booked and booking saved.')
       })
       .catch((error: Error) => {
-        setNotice(`Booked quote is kept locally for this session. Supabase save failed: ${error.message}`)
+        handlePersistenceFailure('Booked quote', error)
       })
   }
 
@@ -675,7 +739,7 @@ function App() {
         setNotice('Manual booking saved.')
       })
       .catch((error: Error) => {
-        setNotice(`Manual booking is kept locally for this session. Supabase save failed: ${error.message}`)
+        handlePersistenceFailure('Manual booking', error)
       })
   }
 

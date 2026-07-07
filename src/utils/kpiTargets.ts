@@ -16,6 +16,7 @@ export function createDefaultKpiTargets(): KpiTarget[] {
 
   return KPI_TARGET_DEFINITIONS.map((definition) => ({
     id: `default-${definition.kpi_key}`,
+    owner_user_id: null,
     ...definition,
     period_type: 'monthly',
     is_active: true,

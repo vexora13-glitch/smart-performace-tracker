@@ -44,11 +44,13 @@ export type PageKey = 'dashboard' | 'work' | 'tasks' | 'kpi' | 'reports' | 'sett
 
 export type SiteVisit = {
   id: string
+  owner_user_id: string | null
   reference_number: string
   customer_full_name: string
   contact_person: string | null
   contact_number: string
   email: string | null
+  job_id: string | null
   address: string | null
   suburb: string
   booked_date: string
@@ -63,6 +65,7 @@ export type SiteVisit = {
 
 export type Quote = {
   id: string
+  owner_user_id: string | null
   site_visit_id: string | null
   quote_reference: string
   customer_full_name: string
@@ -75,6 +78,7 @@ export type Quote = {
 
 export type Booking = {
   id: string
+  owner_user_id: string | null
   site_visit_id: string | null
   quote_id: string | null
   booking_number: string
@@ -92,6 +96,7 @@ export type Booking = {
 
 export type Task = {
   id: string
+  owner_user_id: string | null
   site_visit_id: string | null
   title: string
   description: string | null
@@ -104,6 +109,7 @@ export type Task = {
 
 export type ActivityTimelineItem = {
   id: string
+  owner_user_id: string | null
   entity_type: string
   entity_id: string
   event_type: string
@@ -127,6 +133,7 @@ export type KpiPeriodType = 'monthly'
 
 export type KpiTarget = {
   id: string
+  owner_user_id: string | null
   kpi_key: KpiTargetKey
   kpi_name: string
   target_value: number
@@ -176,6 +183,7 @@ export type NewSiteVisitInput = {
   contact_person: string
   contact_number: string
   email: string
+  job_id: string
   address: string
   suburb: string
   booked_date: string

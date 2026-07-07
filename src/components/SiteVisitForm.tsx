@@ -1,21 +1,17 @@
 import { CalendarPlus } from 'lucide-react'
-import { useState, type ChangeEvent, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 import type { NewSiteVisitInput } from '../types/performance'
+import type { SiteVisitPrefillOutcome, SiteVisitPrefillRequest } from '../types/siteVisitAnalyzer'
+import { mergeSiteVisitAnalysisIntoForm } from '../utils/siteVisitPrefill'
 
 type SiteVisitFormProps = {
   onSubmit: (input: NewSiteVisitInput) => void
+  prefillRequest?: SiteVisitPrefillRequest | null
+  onPrefillApplied?: (outcome: SiteVisitPrefillOutcome) => void
 }
 
 type SiteVisitFormState = Omit<NewSiteVisitInput, 'estimated_quote_value'> & {
   estimated_quote_value: string
-}
-
-const formatToday = () => {
-  const today = new Date()
-  const year = today.getFullYear()
-  const month = String(today.getMonth() + 1).padStart(2, '0')
-  const day = String(today.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
 }
 
 const initialState = (): SiteVisitFormState => ({
@@ -23,17 +19,37 @@ const initialState = (): SiteVisitFormState => ({
   contact_person: '',
   contact_number: '',
   email: '',
+  job_id: '',
   address: '',
   suburb: '',
-  booked_date: formatToday(),
-  booked_time: '09:00',
+  booked_date: '',
+  booked_time: '',
   move_type: 'Residential move',
   notes: '',
   estimated_quote_value: '',
 })
 
-export function SiteVisitForm({ onSubmit }: SiteVisitFormProps) {
+export function SiteVisitForm({ onSubmit, prefillRequest = null, onPrefillApplied }: SiteVisitFormProps) {
   const [form, setForm] = useState<SiteVisitFormState>(initialState)
+  const [prefillOutcome, setPrefillOutcome] = useState<SiteVisitPrefillOutcome | null>(null)
+  const lastPrefillIdRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    if (!prefillRequest || prefillRequest.id === lastPrefillIdRef.current) {
+      return
+    }
+
+    lastPrefillIdRef.current = prefillRequest.id
+    const result = mergeSiteVisitAnalysisIntoForm(form, prefillRequest.analysis)
+    setForm(result.form)
+    setPrefillOutcome(result.outcome)
+  }, [form, prefillRequest])
+
+  useEffect(() => {
+    if (prefillOutcome) {
+      onPrefillApplied?.(prefillOutcome)
+    }
+  }, [onPrefillApplied, prefillOutcome])
 
   const handleChange = (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = event.target
@@ -80,6 +96,10 @@ export function SiteVisitForm({ onSubmit }: SiteVisitFormProps) {
       <label>
         Email
         <input name="email" type="email" value={form.email} onChange={handleChange} placeholder="Optional" />
+      </label>
+      <label>
+        Job ID
+        <input name="job_id" value={form.job_id} onChange={handleChange} placeholder="Optional reference" />
       </label>
       <label className="span-2">
         Address

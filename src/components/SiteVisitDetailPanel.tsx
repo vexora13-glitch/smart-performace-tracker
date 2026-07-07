@@ -152,6 +152,10 @@ export function SiteVisitDetailPanel({
           <dd>{siteVisit.reference_number}</dd>
         </div>
         <div>
+          <dt>Job ID</dt>
+          <dd>{siteVisit.job_id ?? 'Not set'}</dd>
+        </div>
+        <div>
           <dt>Customer</dt>
           <dd>{siteVisit.customer_full_name}</dd>
         </div>

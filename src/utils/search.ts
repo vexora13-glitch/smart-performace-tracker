@@ -23,6 +23,7 @@ export function searchPerformanceData(data: PerformanceData, rawQuery: string): 
     .filter(
       (siteVisit) =>
         includesQuery(siteVisit.reference_number, query) ||
+        includesQuery(siteVisit.job_id, query) ||
         includesQuery(siteVisit.customer_full_name, query) ||
         includesQuery(siteVisit.suburb, query) ||
         includesQuery(siteVisit.contact_number, query),

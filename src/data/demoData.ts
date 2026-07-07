@@ -21,11 +21,13 @@ export function createDemoPerformanceData(): PerformanceData {
   const siteVisits: SiteVisit[] = [
     {
       id: 'demo-site-visit-1',
+      owner_user_id: null,
       reference_number: 'SV-DEMO-001',
       customer_full_name: 'Mia Thompson',
       contact_person: 'Mia Thompson',
       contact_number: '021 555 010',
       email: 'mia@example.com',
+      job_id: 'JOB-DEMO-001',
       address: '14 Hinemoa Street',
       suburb: 'Birkenhead',
       booked_date: dateWithOffset(1),
@@ -39,11 +41,13 @@ export function createDemoPerformanceData(): PerformanceData {
     },
     {
       id: 'demo-site-visit-2',
+      owner_user_id: null,
       reference_number: 'SV-DEMO-002',
       customer_full_name: 'Arjun Patel',
       contact_person: 'Arjun Patel',
       contact_number: '022 555 017',
       email: 'arjun@example.com',
+      job_id: 'JOB-DEMO-002',
       address: '8 Manukau Road',
       suburb: 'Epsom',
       booked_date: dateWithOffset(-2),
@@ -57,11 +61,13 @@ export function createDemoPerformanceData(): PerformanceData {
     },
     {
       id: 'demo-site-visit-3',
+      owner_user_id: null,
       reference_number: 'SV-DEMO-003',
       customer_full_name: 'Hannah Lee',
       contact_person: 'Hannah Lee',
       contact_number: '027 555 018',
       email: 'hannah@example.com',
+      job_id: 'JOB-DEMO-003',
       address: '52 Lake Road',
       suburb: 'Takapuna',
       booked_date: dateWithOffset(-5),
@@ -78,6 +84,7 @@ export function createDemoPerformanceData(): PerformanceData {
   const quotes: Quote[] = [
     {
       id: 'demo-quote-1',
+      owner_user_id: null,
       site_visit_id: 'demo-site-visit-2',
       quote_reference: 'Q-DEMO-001',
       customer_full_name: 'Arjun Patel',
@@ -89,6 +96,7 @@ export function createDemoPerformanceData(): PerformanceData {
     },
     {
       id: 'demo-quote-2',
+      owner_user_id: null,
       site_visit_id: 'demo-site-visit-3',
       quote_reference: 'Q-DEMO-002',
       customer_full_name: 'Hannah Lee',
@@ -103,6 +111,7 @@ export function createDemoPerformanceData(): PerformanceData {
   const bookings: Booking[] = [
     {
       id: 'demo-booking-1',
+      owner_user_id: null,
       site_visit_id: 'demo-site-visit-2',
       quote_id: 'demo-quote-1',
       booking_number: 'B-DEMO-001',
@@ -119,6 +128,7 @@ export function createDemoPerformanceData(): PerformanceData {
     },
     {
       id: 'demo-booking-2',
+      owner_user_id: null,
       site_visit_id: 'demo-site-visit-3',
       quote_id: 'demo-quote-2',
       booking_number: 'B-DEMO-002',
@@ -135,6 +145,7 @@ export function createDemoPerformanceData(): PerformanceData {
     },
     {
       id: 'demo-booking-3',
+      owner_user_id: null,
       site_visit_id: null,
       quote_id: null,
       booking_number: 'B-DEMO-003',
@@ -154,6 +165,7 @@ export function createDemoPerformanceData(): PerformanceData {
   const tasks: Task[] = [
     {
       id: 'demo-task-1',
+      owner_user_id: null,
       site_visit_id: 'demo-site-visit-2',
       title: 'Send report notes to Arjun',
       description: 'Attach site access notes and inventory summary.',
@@ -165,6 +177,7 @@ export function createDemoPerformanceData(): PerformanceData {
     },
     {
       id: 'demo-task-2',
+      owner_user_id: null,
       site_visit_id: null,
       title: 'Crew packing training',
       description: 'Monthly internal training session.',
@@ -176,6 +189,7 @@ export function createDemoPerformanceData(): PerformanceData {
     },
     {
       id: 'demo-task-3',
+      owner_user_id: null,
       site_visit_id: null,
       title: 'Storage process consultation',
       description: 'Consultancy meeting with commercial lead.',
@@ -190,6 +204,7 @@ export function createDemoPerformanceData(): PerformanceData {
   const activityTimeline: ActivityTimelineItem[] = [
     {
       id: 'demo-activity-1',
+      owner_user_id: null,
       entity_type: 'site_visits',
       entity_id: 'demo-site-visit-3',
       event_type: 'status_changed',
@@ -199,6 +214,7 @@ export function createDemoPerformanceData(): PerformanceData {
     },
     {
       id: 'demo-activity-2',
+      owner_user_id: null,
       entity_type: 'bookings',
       entity_id: 'demo-booking-3',
       event_type: 'created',
@@ -208,6 +224,7 @@ export function createDemoPerformanceData(): PerformanceData {
     },
     {
       id: 'demo-activity-3',
+      owner_user_id: null,
       entity_type: 'tasks',
       entity_id: 'demo-task-2',
       event_type: 'completed',
