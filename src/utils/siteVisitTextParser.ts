@@ -47,7 +47,13 @@ const weekdayNumbers: Record<string, number> = {
 }
 
 const streetPattern =
-  /\b\d{1,5}\s+[A-Za-z0-9'. -]+(?:street|st|road|rd|avenue|ave|drive|dr|lane|ln|place|pl|crescent|cres|court|ct|way|terrace|tce|highway|hwy)\b[^\n,;.]*/i
+  /\b\d{1,5}\s+(?:[A-Za-z0-9'.-]+\s+){0,8}(?:street|st|road|rd|avenue|ave|drive|dr|lane|ln|place|pl|crescent|cres|court|ct|way|terrace|tce|highway|hwy)\b[^\n,;.]*/i
+
+type ParsedFieldLine = {
+  label: string
+  normalizedLabel: string
+  value: string
+}
 
 const emptyAnalysis = (rawSummary: string): SiteVisitTextAnalysis => ({
   customerName: null,
@@ -94,6 +100,62 @@ const getLineValue = (lines: string[], labelPattern: RegExp) => {
 
   return null
 }
+
+const normalizeFieldLabel = (value: string) => value.replace(/\*/g, '').replace(/[^a-z0-9]+/gi, ' ').trim().toLowerCase()
+
+const parseFieldLine = (line: string): ParsedFieldLine | null => {
+  const match = line.match(/^\s*([A-Za-z][A-Za-z\s/*().&'-]{0,80}?)\s*\*?\s*[:=-]\s*(.*)$/)
+
+  if (!match) {
+    return null
+  }
+
+  const label = normalizeWhitespace(match[1].replace(/\*/g, ''))
+
+  return {
+    label,
+    normalizedLabel: normalizeFieldLabel(label),
+    value: cleanValue(match[2] ?? ''),
+  }
+}
+
+const labelMatches = (normalizedLabel: string, labels: string[]) =>
+  labels.some((label) => normalizedLabel === normalizeFieldLabel(label))
+
+const getFieldValues = (lines: string[], labels: string[]) => {
+  const values: string[] = []
+
+  lines.forEach((line, index) => {
+    const parsedLine = parseFieldLine(line)
+
+    if (!parsedLine || !labelMatches(parsedLine.normalizedLabel, labels)) {
+      return
+    }
+
+    if (parsedLine.value) {
+      values.push(parsedLine.value)
+      return
+    }
+
+    const valueParts: string[] = []
+    let nextIndex = index + 1
+
+    while (nextIndex < lines.length && !parseFieldLine(lines[nextIndex])) {
+      valueParts.push(cleanValue(lines[nextIndex]))
+      nextIndex += 1
+    }
+
+    const value = cleanValue(valueParts.join(' '))
+
+    if (value) {
+      values.push(value)
+    }
+  })
+
+  return values
+}
+
+const getFirstFieldValue = (lines: string[], labels: string[]) => getFieldValues(lines, labels)[0] ?? null
 
 const validDate = (year: number, monthIndex: number, day: number) => {
   const date = new Date(year, monthIndex, day)
@@ -203,7 +265,7 @@ const parseDate = (text: string, baseDate: Date) => {
   }
 
   const dayMonthMatch = text.match(
-    /\b(?:(mon(?:day)?|tue(?:s|sday)?|wed(?:nesday)?|thu(?:rs|rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\s+)?([0-3]?\d)(?:st|nd|rd|th)?\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:\s+(20\d{2}))?\b/i,
+    /\b(?:(mon(?:day)?|tue(?:s|sday)?|wed(?:nesday)?|thu(?:rs|rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?),?\s+)?([0-3]?\d)(?:st|nd|rd|th)?\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:,?\s+(20\d{2}))?\b/i,
   )
 
   if (dayMonthMatch) {
@@ -225,7 +287,7 @@ const parseDate = (text: string, baseDate: Date) => {
   }
 
   const monthDayMatch = text.match(
-    /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+([0-3]?\d)(?:st|nd|rd|th)?(?:\s+(20\d{2}))?\b/i,
+    /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+([0-3]?\d)(?:st|nd|rd|th)?(?:,?\s+(20\d{2}))?\b/i,
   )
 
   if (monthDayMatch) {
@@ -274,13 +336,18 @@ const parseDate = (text: string, baseDate: Date) => {
 
 const extractEmail = (text: string) => text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] ?? null
 
+const extractIdFromFieldValue = (value: string) => value.match(/^#?[A-Z0-9][A-Z0-9_./-]{1,}\b/i)?.[0] ?? null
+
 const extractJobId = (lines: string[], text: string) =>
+  getFieldValues(lines, ['Job ID', 'Booking ID', 'Inquiry ID', 'Reference', 'Ref']).map(extractIdFromFieldValue).find(Boolean) ??
   getLineValue(lines, /^\s*(?:job\s*id|booking\s*id|inquiry\s*id|ref(?:erence)?\.?)\s*[:#=-]?\s*(#?[A-Z0-9][A-Z0-9_./-]{1,})\b/i) ??
   text.match(/\b(?:job\s*id|booking\s*id|inquiry\s*id|ref(?:erence)?\.?)\s*[:#=-]?\s*(#?[A-Z0-9][A-Z0-9_./-]{1,})\b/i)?.[1] ??
   null
 
 const extractPhone = (lines: string[], text: string) => {
-  const labeledPhone = getLineValue(lines, /^\s*(?:phone|mobile|contact\s*number|tel)\s*[:=-]\s*(.+)$/i)
+  const labeledPhone =
+    getFirstFieldValue(lines, ['Phone', 'Mobile', 'Contact Number', 'Tel']) ??
+    getLineValue(lines, /^\s*(?:phone|mobile|contact\s*number|tel)\s*[:=-]\s*(.+)$/i)
 
   if (labeledPhone) {
     return labeledPhone
@@ -297,25 +364,150 @@ const extractPhone = (lines: string[], text: string) => {
   return candidates[0] ?? null
 }
 
-const extractCustomerName = (lines: string[]) =>
-  getLineValue(lines, /^\s*(?:customer(?:\s+name)?|client(?:\s+name)?|name)\s*[:=-]\s*(.+)$/i)
+const extractCustomerName = (lines: string[]) => {
+  const firstName = getFirstFieldValue(lines, ['First Name'])
+  const surname = getFirstFieldValue(lines, ['Surname', 'Last Name'])
+
+  if (firstName && surname) {
+    return cleanValue(`${firstName} ${surname}`)
+  }
+
+  return (
+    getFirstFieldValue(lines, ['Customer Name', 'Client Name', 'Customer']) ??
+    getFirstFieldValue(lines, ['Name']) ??
+    getFirstFieldValue(lines, ['Destination Contact Name'])
+  )
+}
 
 const extractAddress = (lines: string[], text: string) =>
-  getLineValue(lines, /^\s*(?:pickup(?:\s+address)?|site(?:\s+address)?|visit(?:\s+address)?|address|location)\s*[:=-]\s*(.+)$/i) ??
+  getFirstFieldValue(lines, ['Pick Up Address', 'Pickup Address', 'Pick-up Address']) ??
+  getFirstFieldValue(lines, ['Site Address', 'Visit Address']) ??
+  getFirstFieldValue(lines, ['Delivery Address', 'Destination Address']) ??
+  getFirstFieldValue(lines, ['Address']) ??
   text.match(streetPattern)?.[0] ??
   null
 
 const extractNotes = (lines: string[]) => {
-  const notes = lines
-    .map((line) =>
-      line.match(
-        /^\s*(?:notes?|access(?:\s+notes?)?|special\s+instructions?|instructions?|parking|entry|gate\s+code|lift|stairs|key|lockbox)\s*[:=-]\s*(.+)$/i,
-      )?.[1],
-    )
-    .filter((value): value is string => Boolean(value))
+  const meaninglessNotePattern = /^(?:no|none|n\/a|na|nil|no\s+(?:access|settlement|house)\s+notes?)$/i
+  const notes = getFieldValues(lines, ['Client Notes', 'Sales Notes', 'Access Notes', 'Settlement Notes', 'House Notes'])
     .map(cleanValue)
+    .filter((value) => value && !meaninglessNotePattern.test(value))
 
   return [...new Set(notes)]
+}
+
+const excludedScheduleLabels = ['Move Date', 'Date of Move', 'Moving Date', 'Move Time', 'Time Requested', 'Time (requested)', 'Requested Time']
+
+const stripMoveScheduleFields = (lines: string[]) => {
+  const includedLines: string[] = []
+  let skipNextValueLine = false
+
+  lines.forEach((line) => {
+    if (skipNextValueLine) {
+      if (!parseFieldLine(line)) {
+        skipNextValueLine = false
+        return
+      }
+
+      skipNextValueLine = false
+    }
+
+    const parsedLine = parseFieldLine(line)
+
+    if (parsedLine && labelMatches(parsedLine.normalizedLabel, excludedScheduleLabels)) {
+      skipNextValueLine = !parsedLine.value
+      return
+    }
+
+    includedLines.push(line)
+  })
+
+  return includedLines.join(' ')
+}
+
+const siteVisitPhrasePriority = (text: string) => {
+  if (/\bsite\s+visit\s+booked\s+for\b/i.test(text)) {
+    return 0
+  }
+
+  if (/\bsite\s+visit\s+booked\b/i.test(text)) {
+    return 1
+  }
+
+  if (/\bsite\s+visit\s+scheduled\b/i.test(text)) {
+    return 2
+  }
+
+  if (/\bsite\s+visit\s+appointment\b/i.test(text)) {
+    return 3
+  }
+
+  if (/\bsite\s+visit\b/i.test(text)) {
+    return 4
+  }
+
+  return null
+}
+
+const siteVisitScheduleCandidates = (lines: string[]) => {
+  const candidates: Array<{ text: string; priority: number; index: number }> = []
+
+  getFieldValues(lines, ['Sales Notes']).forEach((value, index) => {
+    const priority = siteVisitPhrasePriority(value)
+
+    if (priority !== null) {
+      candidates.push({ text: value, priority, index: index - 1000 })
+    }
+  })
+
+  lines.forEach((line, index) => {
+    const priority = siteVisitPhrasePriority(line)
+
+    if (priority === null) {
+      return
+    }
+
+    candidates.push({ text: line, priority, index })
+
+    const nextLine = lines[index + 1]
+    if (nextLine && !parseFieldLine(nextLine)) {
+      candidates.push({ text: `${line} ${nextLine}`, priority, index })
+    }
+  })
+
+  return candidates.sort((left, right) => left.priority - right.priority || left.index - right.index)
+}
+
+const parseScheduleFromCandidates = (candidates: Array<{ text: string }>, baseDate: Date) => {
+  for (const candidate of candidates) {
+    const dateResult = parseDate(candidate.text, baseDate)
+    const timeResult = parseTime(candidate.text)
+
+    if (dateResult.preferredDate || timeResult.preferredTime) {
+      return {
+        preferredDate: dateResult.preferredDate,
+        preferredTime: timeResult.preferredTime,
+        vagueDatePhrase: dateResult.vagueDatePhrase,
+        vagueTimePhrase: timeResult.vagueTimePhrase,
+      }
+    }
+  }
+
+  return null
+}
+
+const parsePreferredSchedule = (lines: string[], baseDate: Date) => {
+  const siteVisitSchedule = parseScheduleFromCandidates(siteVisitScheduleCandidates(lines), baseDate)
+  const fallbackText = stripMoveScheduleFields(lines)
+  const fallbackDate = siteVisitSchedule?.preferredDate ? null : parseDate(fallbackText, baseDate)
+  const fallbackTime = siteVisitSchedule?.preferredTime ? null : parseTime(fallbackText)
+
+  return {
+    preferredDate: siteVisitSchedule?.preferredDate ?? fallbackDate?.preferredDate ?? null,
+    preferredTime: siteVisitSchedule?.preferredTime ?? fallbackTime?.preferredTime ?? null,
+    vagueDatePhrase: siteVisitSchedule?.vagueDatePhrase ?? fallbackDate?.vagueDatePhrase ?? null,
+    vagueTimePhrase: siteVisitSchedule?.vagueTimePhrase ?? fallbackTime?.vagueTimePhrase ?? null,
+  }
 }
 
 const buildNotes = (noteParts: string[]) => {
@@ -360,8 +552,7 @@ export function parseSiteVisitTextLocally(inputText: string, baseDate = new Date
   }
 
   const lines = normalizeLines(text)
-  const { preferredDate, vagueDatePhrase } = parseDate(text, baseDate)
-  const { preferredTime, vagueTimePhrase } = parseTime(text)
+  const { preferredDate, preferredTime, vagueDatePhrase, vagueTimePhrase } = parsePreferredSchedule(lines, baseDate)
   const noteParts = extractNotes(lines)
 
   if (vagueDatePhrase || vagueTimePhrase) {
