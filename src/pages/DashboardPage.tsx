@@ -1,5 +1,5 @@
-import { CalendarPlus, ClipboardList, ListPlus, Phone, SearchX } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { CalendarPlus, ClipboardList, ListPlus, Phone, SearchX, Sparkles } from 'lucide-react'
+import { useMemo, useRef, useState } from 'react'
 import { DataTable, type DataTableColumn } from '../components/DataTable'
 import { EmptyState } from '../components/EmptyState'
 import { KpiSummaryGrid } from '../components/KpiSummaryGrid'
@@ -10,6 +10,7 @@ import { QuickActionButton } from '../components/QuickActionButton'
 import { SearchInput } from '../components/SearchInput'
 import { SiteVisitDetailPanel } from '../components/SiteVisitDetailPanel'
 import { SiteVisitForm } from '../components/SiteVisitForm'
+import { SiteVisitTextAnalyzerModal } from '../components/SiteVisitTextAnalyzerModal'
 import { StatusPill } from '../components/StatusPill'
 import { TaskForm } from '../components/TaskForm'
 import type {
@@ -28,6 +29,7 @@ import type {
   Task,
   TaskStatus,
 } from '../types/performance'
+import type { SiteVisitPrefillOutcome, SiteVisitPrefillRequest, SiteVisitTextAnalysis } from '../types/siteVisitAnalyzer'
 import { formatDateTime, sortSiteVisitsBySchedule } from '../utils/kpi'
 import { searchPerformanceData, type SearchResult } from '../utils/search'
 
@@ -77,6 +79,10 @@ export function DashboardPage({
   onBookQuote,
 }: DashboardPageProps) {
   const [showManualBookingForm, setShowManualBookingForm] = useState(false)
+  const [showTextAnalyzer, setShowTextAnalyzer] = useState(false)
+  const [siteVisitPrefillRequest, setSiteVisitPrefillRequest] = useState<SiteVisitPrefillRequest | null>(null)
+  const [siteVisitPrefillOutcome, setSiteVisitPrefillOutcome] = useState<SiteVisitPrefillOutcome | null>(null)
+  const prefillRequestIdRef = useRef(0)
   const bookedSiteVisits = useMemo(
     () => sortSiteVisitsBySchedule(data.siteVisits.filter((siteVisit) => siteVisit.status === 'Booked')),
     [data.siteVisits],
@@ -119,6 +125,12 @@ export function DashboardPage({
     { key: 'status', header: 'Status', render: (siteVisit) => <StatusPill status={siteVisit.status} /> },
   ]
 
+  const handleApplyTextAnalysis = (analysis: SiteVisitTextAnalysis) => {
+    prefillRequestIdRef.current += 1
+    setSiteVisitPrefillOutcome(null)
+    setSiteVisitPrefillRequest({ id: prefillRequestIdRef.current, analysis })
+  }
+
   return (
     <div className="page-stack">
       <header className="page-header">
@@ -138,7 +150,7 @@ export function DashboardPage({
       <SearchInput
         value={searchQuery}
         onChange={onSearchChange}
-        placeholder="Search site visits, customers, suburbs, phone numbers, or tasks"
+        placeholder="Search site visits, job IDs, customers, suburbs, phone numbers, or tasks"
       />
 
       {searchQuery.trim() ? (
@@ -210,8 +222,16 @@ export function DashboardPage({
               <span className="eyebrow">Work</span>
               <h2>Quick Site Visit Booking</h2>
             </div>
+            <button className="secondary-button" type="button" onClick={() => setShowTextAnalyzer(true)}>
+              <Sparkles size={16} aria-hidden="true" />
+              AI Text Analyzer
+            </button>
           </div>
-          <SiteVisitForm onSubmit={onAddSiteVisit} />
+          <SiteVisitForm
+            prefillRequest={siteVisitPrefillRequest}
+            onPrefillApplied={setSiteVisitPrefillOutcome}
+            onSubmit={onAddSiteVisit}
+          />
         </div>
 
         <div className="surface" id="quick-task">
@@ -298,6 +318,14 @@ export function DashboardPage({
           </div>
         )}
       </section>
+
+      <SiteVisitTextAnalyzerModal
+        isOpen={showTextAnalyzer}
+        prefillOutcome={siteVisitPrefillOutcome}
+        onApply={handleApplyTextAnalysis}
+        onClose={() => setShowTextAnalyzer(false)}
+        onResetPrefillOutcome={() => setSiteVisitPrefillOutcome(null)}
+      />
     </div>
   )
 }
