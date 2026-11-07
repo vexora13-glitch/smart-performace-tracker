@@ -1,30 +1,32 @@
 {
-  "name": "smart-performance-tracker",
+  "name": "vexora-client-portal",
   "private": true,
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node scripts/dev.mjs",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "node --experimental-strip-types --test tests/siteVisitTextParser.test.mjs tests/kpiTargets.test.mjs",
-    "test:analyzer": "node --experimental-strip-types tests/siteVisitTextParser.test.mjs",
-    "preview": "vite preview"
+    "test": "node --test tests/*.test.mjs",
+    "preview": "vite preview",
+    "test:e2e": "playwright test",
+    "typecheck": "tsc -b"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.110.0",
-    "date-fns": "^4.4.0",
+    "@supabase/supabase-js": "2.110.0",
     "lucide-react": "^1.23.0",
-    "openai": "^6.45.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.15",
+    "@playwright/test": "1.65.0",
     "@types/node": "^24.13.2",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",
     "oxlint": "^1.71.0",
+    "prettier": "3.9.10",
     "typescript": "~6.0.2",
     "vite": "^8.1.1"
   }

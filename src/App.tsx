@@ -1,1069 +1,519 @@
-import { FileText, Settings } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Session } from '@supabase/supabase-js'
-import './App.css'
-import { AppShell } from './components/AppShell'
-import { LoginPage } from './components/LoginPage'
-import { hasSupabaseConfig, supabase } from './lib/supabase'
+import { useCallback, useEffect, useState } from 'react';
+import type { Session } from '@supabase/supabase-js';
 import {
-  createLocalActivityTimelineItem,
-  createLocalBooking,
-  createLocalQuote,
-  createLocalSiteVisit,
-  createLocalTask,
-  loadKpiTargets,
-  loadPerformanceData,
-  saveBooking,
-  saveKpiTargets,
-  saveQuote,
-  saveSiteVisit,
-  saveTask,
-  updateBooking,
-  updateQuote,
-  updateSiteVisit,
-  updateTask,
-} from './services/performanceService'
-import type {
-  Booking,
-  BookingVerificationUpdate,
-  KpiTarget,
-  NewBookingInput,
-  NewQuoteInput,
-  NewSiteVisitInput,
-  NewTaskInput,
-  PageKey,
-  PerformanceData,
-  Quote,
-  QuoteBookingInput,
-  QuoteStatus,
-  SiteVisit,
-  SiteVisitStatus,
-  Task,
-  TaskStatus,
-} from './types/performance'
-import { calculateMonthlyKpis, formatCurrency, getMonthRange } from './utils/kpi'
-import { createDefaultKpiTargets } from './utils/kpiTargets'
-import type { SearchResult } from './utils/search'
-import { DashboardPage } from './pages/DashboardPage'
-import { KpiPage } from './pages/KpiPage'
-import { PlaceholderPage } from './pages/PlaceholderPage'
-import { TasksPage } from './pages/TasksPage'
-import { WorkPage } from './pages/WorkPage'
+  ArrowUpRight,
+  LayoutDashboard,
+  LogOut,
+  MessageSquare,
+  Users,
+  ShieldCheck,
+  RefreshCw,
+  Plus,
+  Search,
+  ChevronRight,
+} from 'lucide-react';
+import { hasSupabaseConfig, supabase } from './lib/supabase';
+import { db, loadPortal, unread, unwrap } from './services/portal';
+import { emptyData, type PortalData, type Profile } from './types/portal';
+import { Login } from './components/Login';
+import { ClientDialog } from './components/ClientDialog';
+import { Workspace } from './components/Workspace';
+import { Chat } from './components/Chat';
+import './App.css';
 
-const initialData: PerformanceData = {
-  siteVisits: [],
-  quotes: [],
-  bookings: [],
-  tasks: [],
-  activityTimeline: [],
-}
-
-const quoteSentStatuses = new Set<QuoteStatus>(['Sent', 'Follow Up', 'Booked', 'Lost'])
-
-type AuthStatus = 'checking' | 'signed-out' | 'signed-in' | 'local'
-
-const formatToday = () => {
-  const today = new Date()
-  const year = today.getFullYear()
-  const month = String(today.getMonth() + 1).padStart(2, '0')
-  const day = String(today.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
-const createWorkflowActivity = (
-  entityType: string,
-  entityId: string,
-  eventType: string,
-  eventLabel: string,
-  eventDescription: string | null,
-) => createLocalActivityTimelineItem(entityType, entityId, eventType, eventLabel, eventDescription)
-
-const shouldMoveSiteVisitToQuoteSent = (siteVisit: SiteVisit) =>
-  !['Quote Sent', 'Won', 'Lost / Closed'].includes(siteVisit.status)
-
-const createUpdatedQuote = (quote: Quote, status: QuoteStatus): Quote => ({
-  ...quote,
-  status,
-  quote_sent_date: quoteSentStatuses.has(status) ? quote.quote_sent_date ?? formatToday() : quote.quote_sent_date,
-  updated_at: new Date().toISOString(),
-})
-
-function App() {
-  const [activePage, setActivePage] = useState<PageKey>('dashboard')
-  const [data, setData] = useState<PerformanceData>(initialData)
-  const [notice, setNotice] = useState(() =>
-    hasSupabaseConfig ? 'Checking Supabase session...' : 'Loading performance data...',
-  )
-  const [authStatus, setAuthStatus] = useState<AuthStatus>(() => (hasSupabaseConfig ? 'checking' : 'local'))
-  const [session, setSession] = useState<Session | null>(null)
-  const [searchQuery, setSearchQuery] = useState('')
-  const [selectedSiteVisit, setSelectedSiteVisit] = useState<SiteVisit | null>(null)
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
-  const [selectedBookingId, setSelectedBookingId] = useState<string | null>(null)
-  const [selectedQuoteId, setSelectedQuoteId] = useState<string | null>(null)
-  const [selectedMonth, setSelectedMonth] = useState(() => new Date())
-  const [kpiTargets, setKpiTargets] = useState<KpiTarget[]>(() => createDefaultKpiTargets())
-  const isMountedRef = useRef(true)
-
-  const clearLoadedSessionData = useCallback(() => {
-    setData(initialData)
-    setKpiTargets(createDefaultKpiTargets())
-    setSelectedSiteVisit(null)
-    setSelectedTaskId(null)
-    setSelectedBookingId(null)
-    setSelectedQuoteId(null)
-  }, [])
-
-  const loadAppData = useCallback(async (noticeOverride?: string) => {
-    try {
-      const [performanceResult, targetsResult] = await Promise.all([loadPerformanceData(), loadKpiTargets()])
-
-      if (!isMountedRef.current) {
-        return
-      }
-
-      setData(performanceResult.data)
-      setKpiTargets(targetsResult.targets)
-      setNotice(noticeOverride ?? [performanceResult.notice, targetsResult.notice].filter(Boolean).join(' '))
-      setSelectedSiteVisit(performanceResult.data.siteVisits[0] ?? null)
-      setSelectedTaskId(null)
-      setSelectedBookingId(null)
-      setSelectedQuoteId(null)
-    } catch (error) {
-      if (!isMountedRef.current) {
-        return
-      }
-
-      if (hasSupabaseConfig) {
-        clearLoadedSessionData()
-      }
-
-      setNotice(error instanceof Error ? `Saved data could not be loaded: ${error.message}` : 'Saved data could not be loaded.')
-    }
-  }, [clearLoadedSessionData])
-
-  const handlePersistenceFailure = useCallback(
-    (label: string, error: Error) => {
-      const storageName = hasSupabaseConfig ? 'Supabase' : 'local browser storage'
-      const message = `${label} was not saved to ${storageName}: ${error.message}`
-
-      if (hasSupabaseConfig) {
-        if (error.message.toLowerCase().includes('sign in before saving')) {
-          setSession(null)
-          setAuthStatus('signed-out')
-          clearLoadedSessionData()
-          setNotice(message)
-          return
-        }
-
-        void loadAppData(message)
-        return
-      }
-
-      setNotice(message)
-    },
-    [clearLoadedSessionData, loadAppData],
-  )
-
-  const handleSignedIn = useCallback(
-    (nextSession: Session) => {
-      setSession(nextSession)
-      setAuthStatus('signed-in')
-      setNotice('Signed in. Loading saved Supabase data...')
-      void loadAppData()
-    },
-    [loadAppData],
-  )
-
-  const handleLogout = useCallback(async () => {
-    if (!hasSupabaseConfig || !supabase) {
-      return
-    }
-
-    const { error } = await supabase.auth.signOut()
-
-    if (error) {
-      setNotice(`Sign out failed: ${error.message}`)
-      return
-    }
-
-    setSession(null)
-    setAuthStatus('signed-out')
-    clearLoadedSessionData()
-    setNotice('Signed out. Supabase records remain saved and will reload after sign in.')
-  }, [clearLoadedSessionData])
-
-  const ensureAuthenticatedForSupabaseSave = useCallback(() => {
-    if (!hasSupabaseConfig || session) {
-      return true
-    }
-
-    setAuthStatus('signed-out')
-    clearLoadedSessionData()
-    setNotice('Sign in before saving Supabase data.')
-    return false
-  }, [clearLoadedSessionData, session])
-
+type Page = 'Dashboard' | 'Clients' | 'Messages';
+export default function App() {
+  const [session, setSession] = useState<Session | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [data, setData] = useState<PortalData>(emptyData);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [page, setPage] = useState<Page>('Dashboard');
+  const [workspace, setWorkspace] = useState<string | null>(null);
+  const [dialog, setDialog] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [retry, setRetry] = useState(0);
   useEffect(() => {
-    isMountedRef.current = true
-
-    if (!hasSupabaseConfig || !supabase) {
-      setAuthStatus('local')
-      setSession(null)
-      void loadAppData()
-
-      return () => {
-        isMountedRef.current = false
-      }
+    if (!supabase) {
+      setLoading(false);
+      return;
     }
-
-    const supabaseClient = supabase
-    let isActive = true
-
-    const initializeSession = async () => {
-      const { data: sessionData, error } = await supabaseClient.auth.getSession()
-
-      if (!isMountedRef.current || !isActive) {
-        return
+    let active = true;
+    supabase.auth.getSession().then((result) => {
+      if (active) {
+        setSession(result.data.session);
+        if (result.error) {
+          setError(result.error.message);
+          setLoading(false);
+        }
       }
-
-      if (error) {
-        setSession(null)
-        setAuthStatus('signed-out')
-        clearLoadedSessionData()
-        setNotice(`Supabase session could not be checked: ${error.message}`)
-        return
+    });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, next) => {
+      setSession(next);
+      if (!next) {
+        setProfile(null);
+        setData(emptyData);
+        setWorkspace(null);
+        setPage('Dashboard');
+        setLoading(false);
       }
-
-      if (!sessionData.session) {
-        setSession(null)
-        setAuthStatus('signed-out')
-        clearLoadedSessionData()
-        setNotice('Sign in to load saved Supabase data.')
-        return
-      }
-
-      setSession(sessionData.session)
-      setAuthStatus('signed-in')
-      void loadAppData()
-    }
-
-    void initializeSession()
-
+    });
     return () => {
-      isActive = false
-      isMountedRef.current = false
-    }
-  }, [clearLoadedSessionData, loadAppData])
-
+      active = false;
+      listener.subscription.unsubscribe();
+    };
+  }, []);
+  const userId = session?.user.id;
+  const refresh = useCallback(async () => {
+    const next = await loadPortal();
+    setData(next);
+  }, []);
   useEffect(() => {
-    if (!hasSupabaseConfig || !supabase) {
-      return undefined
+    if (!userId) {
+      setLoading(false);
+      return;
     }
-
-    const supabaseClient = supabase
-    const {
-      data: { subscription },
-    } = supabaseClient.auth.onAuthStateChange((event, nextSession) => {
-      if (event === 'INITIAL_SESSION') {
-        return
+    let active = true;
+    setLoading(true);
+    setError('');
+    setProfile(null);
+    setData(emptyData);
+    (async () => {
+      const own = unwrap(
+        await db().from('portal_profiles').select('*').eq('id', userId).single(),
+      ) as Profile;
+      if (!own.active) throw new Error('Your portal account is inactive. Please contact Vexora.');
+      const next = await loadPortal();
+      if (active) {
+        setProfile(own);
+        setData(next);
+        setWorkspace(own.role === 'client' ? own.id : null);
       }
-
-      if (event === 'SIGNED_OUT' || !nextSession) {
-        setSession(null)
-        setAuthStatus('signed-out')
-        clearLoadedSessionData()
-        setNotice('Signed out. Supabase records remain saved and will reload after sign in.')
-        return
-      }
-
-      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
-        setSession(nextSession)
-        setAuthStatus('signed-in')
-        void loadAppData(event === 'SIGNED_IN' ? 'Signed in. Supabase data loaded.' : undefined)
-      }
-    })
-
+    })()
+      .catch((error) => {
+        if (active) setError(`Portal access unavailable. ${error.message}`);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
     return () => {
-      subscription.unsubscribe()
-    }
-  }, [clearLoadedSessionData, loadAppData])
-
-  const monthRange = useMemo(() => getMonthRange(selectedMonth), [selectedMonth])
-  const kpis = useMemo(() => calculateMonthlyKpis(data, selectedMonth), [data, selectedMonth])
-
-  const replaceSiteVisit = (draft: SiteVisit, saved: SiteVisit) => {
-    setData((current) => ({
-      ...current,
-      siteVisits: current.siteVisits.map((siteVisit) => (siteVisit.id === draft.id ? saved : siteVisit)),
-      quotes: current.quotes.map((quote) =>
-        quote.site_visit_id === draft.id ? { ...quote, site_visit_id: saved.id } : quote,
-      ),
-      bookings: current.bookings.map((booking) =>
-        booking.site_visit_id === draft.id ? { ...booking, site_visit_id: saved.id } : booking,
-      ),
-      tasks: current.tasks.map((task) => (task.site_visit_id === draft.id ? { ...task, site_visit_id: saved.id } : task)),
-      activityTimeline: current.activityTimeline.map((item) =>
-        item.entity_type === 'site_visits' && item.entity_id === draft.id ? { ...item, entity_id: saved.id } : item,
-      ),
-    }))
-    setSelectedSiteVisit((current) => (current?.id === draft.id ? saved : current))
-  }
-
-  const replaceQuote = (draft: Quote, saved: Quote) => {
-    setData((current) => ({
-      ...current,
-      quotes: current.quotes.map((quote) => (quote.id === draft.id ? saved : quote)),
-      bookings: current.bookings.map((booking) =>
-        booking.quote_id === draft.id ? { ...booking, quote_id: saved.id } : booking,
-      ),
-      activityTimeline: current.activityTimeline.map((item) =>
-        item.entity_type === 'quotes' && item.entity_id === draft.id ? { ...item, entity_id: saved.id } : item,
-      ),
-    }))
-  }
-
-  const replaceBooking = (draft: Booking, saved: Booking) => {
-    setData((current) => ({
-      ...current,
-      bookings: current.bookings.map((booking) => (booking.id === draft.id ? saved : booking)),
-      activityTimeline: current.activityTimeline.map((item) =>
-        item.entity_type === 'bookings' && item.entity_id === draft.id ? { ...item, entity_id: saved.id } : item,
-      ),
-    }))
-  }
-
-  const replaceTask = (draft: Task, saved: Task) => {
-    setData((current) => ({
-      ...current,
-      tasks: current.tasks.map((task) => (task.id === draft.id ? saved : task)),
-      activityTimeline: current.activityTimeline.map((item) =>
-        item.entity_type === 'tasks' && item.entity_id === draft.id ? { ...item, entity_id: saved.id } : item,
-      ),
-    }))
-  }
-
-  const handlePreviousMonth = () => {
-    setSelectedMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))
-  }
-
-  const handleCurrentMonth = () => {
-    setSelectedMonth(new Date())
-  }
-
-  const handleNextMonth = () => {
-    setSelectedMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))
-  }
-
-  const handleSaveKpiTargets = (targets: KpiTarget[]) => {
-    if (!ensureAuthenticatedForSupabaseSave()) {
-      return
-    }
-
-    setKpiTargets(targets)
-
-    void saveKpiTargets(targets)
-      .then((savedTargets) => {
-        setKpiTargets(savedTargets)
-        setNotice('KPI targets saved.')
-      })
-      .catch((error: Error) => {
-        handlePersistenceFailure('KPI targets', error)
-      })
-  }
-
-  const handleApplyBookingVerifications = (updates: BookingVerificationUpdate[]) => {
-    if (!updates.length) {
-      return
-    }
-
-    if (!ensureAuthenticatedForSupabaseSave()) {
-      return
-    }
-
-    const updatesByBookingId = new Map(updates.map((update) => [update.bookingId, update]))
-    const now = new Date().toISOString()
-    const updatedBookings = data.bookings
-      .map((booking) => {
-        const update = updatesByBookingId.get(booking.id)
-
-        if (!update) {
-          return null
+      active = false;
+    };
+  }, [userId, retry]);
+  useEffect(() => {
+    if (!profile) return;
+    let active = true;
+    const timer = window.setInterval(async () => {
+      if (document.visibilityState !== 'visible') return;
+      try {
+        const own = unwrap(
+          await db().from('portal_profiles').select('*').eq('id', profile.id).single(),
+        ) as Profile;
+        if (!own.active) {
+          if (active) {
+            setProfile(null);
+            setData(emptyData);
+            setError('Your portal account is inactive. Please contact Vexora.');
+          }
+          return;
         }
-
-        return {
-          ...booking,
-          actual_value: update.actualValue,
-          verification_status: update.verificationStatus,
-          updated_at: now,
+        const next = await loadPortal();
+        if (active) {
+          setData(next);
+          setError('');
         }
-      })
-      .filter((booking): booking is Booking => Boolean(booking))
-    const updatedBookingById = new Map(updatedBookings.map((booking) => [booking.id, booking]))
-    const activities = updatedBookings.flatMap((booking) => {
-      const update = updatesByBookingId.get(booking.id)
-      const verifiedActivity = createWorkflowActivity(
-        'bookings',
-        booking.id,
-        'booking_verified',
-        'Booking verified',
-        `${booking.booking_number} verified at ${booking.actual_value === null ? 'no actual value' : formatCurrency(booking.actual_value)}.`,
-      )
-
-      if (!update?.varianceDetected || update.varianceAmount === undefined) {
-        return [verifiedActivity]
+      } catch {
+        if (active) setError('Updates are unavailable. Check your connection and refresh.');
       }
-
-      return [
-        verifiedActivity,
-        createWorkflowActivity(
-          'bookings',
-          booking.id,
-          'booking_variance_detected',
-          'Booking variance detected',
-          `${booking.booking_number}: estimated ${formatCurrency(booking.estimated_value)}, actual ${formatCurrency(
-            booking.actual_value ?? booking.estimated_value,
-          )}, variance ${formatCurrency(update.varianceAmount)}.`,
-        ),
-      ]
-    })
-
-    setData((current) => ({
-      ...current,
-      bookings: current.bookings.map((booking) => updatedBookingById.get(booking.id) ?? booking),
-      activityTimeline: [...activities, ...current.activityTimeline],
-    }))
-
-    void Promise.all(updatedBookings.map((booking) => updateBooking(booking)))
-      .then((savedBookings) => {
-        const savedBookingById = new Map(savedBookings.map((booking) => [booking.id, booking]))
-        setData((current) => ({
-          ...current,
-          bookings: current.bookings.map((booking) => savedBookingById.get(booking.id) ?? booking),
-        }))
-        setNotice(`${savedBookings.length} booking verification update${savedBookings.length === 1 ? '' : 's'} applied.`)
-      })
-      .catch((error: Error) => {
-        handlePersistenceFailure('Booking verification', error)
-      })
+    }, 15000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [profile]);
+  async function signOut() {
+    const result = await db().auth.signOut({ scope: 'local' });
+    if (result.error) {
+      setError(result.error.message);
+      return;
+    }
+    setSession(null);
+    setProfile(null);
+    setData(emptyData);
   }
-
-  const handleMarkBookingsNotFound = (bookingIds: string[]) => {
-    if (!bookingIds.length) {
-      return
-    }
-
-    if (!ensureAuthenticatedForSupabaseSave()) {
-      return
-    }
-
-    const bookingIdSet = new Set(bookingIds)
-    const now = new Date().toISOString()
-    const updatedBookings = data.bookings
-      .filter((booking) => bookingIdSet.has(booking.id))
-      .map((booking) => ({
-        ...booking,
-        verification_status: 'Not Found' as const,
-        updated_at: now,
-      }))
-    const updatedBookingById = new Map(updatedBookings.map((booking) => [booking.id, booking]))
-    const activities = updatedBookings.map((booking) =>
-      createWorkflowActivity(
-        'bookings',
-        booking.id,
-        'booking_not_found',
-        'Booking not found',
-        `${booking.booking_number} was not found in the monthly import.`,
-      ),
-    )
-
-    setData((current) => ({
-      ...current,
-      bookings: current.bookings.map((booking) => updatedBookingById.get(booking.id) ?? booking),
-      activityTimeline: [...activities, ...current.activityTimeline],
-    }))
-
-    void Promise.all(updatedBookings.map((booking) => updateBooking(booking)))
-      .then((savedBookings) => {
-        const savedBookingById = new Map(savedBookings.map((booking) => [booking.id, booking]))
-        setData((current) => ({
-          ...current,
-          bookings: current.bookings.map((booking) => savedBookingById.get(booking.id) ?? booking),
-        }))
-        setNotice(`${savedBookings.length} booking${savedBookings.length === 1 ? '' : 's'} marked Not Found.`)
-      })
-      .catch((error: Error) => {
-        handlePersistenceFailure('Not Found booking status', error)
-      })
-  }
-
-  const handleAddSiteVisit = (input: NewSiteVisitInput) => {
-    if (!ensureAuthenticatedForSupabaseSave()) {
-      return
-    }
-
-    const draft = createLocalSiteVisit(input, data.siteVisits.length + 1)
-    setData((current) => ({ ...current, siteVisits: [draft, ...current.siteVisits] }))
-    setSelectedSiteVisit(draft)
-
-    void saveSiteVisit(draft)
-      .then((saved) => {
-        replaceSiteVisit(draft, saved)
-        setNotice('Site visit saved.')
-      })
-      .catch((error: Error) => {
-        handlePersistenceFailure('Site visit', error)
-      })
-  }
-
-  const handleUpdateSiteVisitStatus = (siteVisit: SiteVisit, status: SiteVisitStatus) => {
-    if (!ensureAuthenticatedForSupabaseSave()) {
-      return
-    }
-
-    const updatedSiteVisit = { ...siteVisit, status, updated_at: new Date().toISOString() }
-    const activity = createWorkflowActivity(
-      'site_visits',
-      siteVisit.id,
-      'status_changed',
-      'Site visit status changed',
-      `${siteVisit.reference_number}: ${siteVisit.status} to ${status}`,
-    )
-
-    setData((current) => ({
-      ...current,
-      siteVisits: current.siteVisits.map((record) => (record.id === siteVisit.id ? updatedSiteVisit : record)),
-      activityTimeline: [activity, ...current.activityTimeline],
-    }))
-    setSelectedSiteVisit(updatedSiteVisit)
-
-    void updateSiteVisit(updatedSiteVisit)
-      .then((saved) => {
-        replaceSiteVisit(updatedSiteVisit, saved)
-        setNotice('Site visit status updated.')
-      })
-      .catch((error: Error) => {
-        handlePersistenceFailure('Site visit status', error)
-      })
-  }
-
-  const handleAddTask = (input: NewTaskInput) => {
-    if (!ensureAuthenticatedForSupabaseSave()) {
-      return
-    }
-
-    const draft = createLocalTask(input)
-    const taskCreatedActivity = createWorkflowActivity('tasks', draft.id, 'created', 'Task created', draft.title)
-    const taskCompletedActivity =
-      draft.status === 'Completed'
-        ? createWorkflowActivity('tasks', draft.id, 'completed', 'Task completed', draft.title)
-        : null
-
-    setData((current) => ({
-      ...current,
-      tasks: [draft, ...current.tasks],
-      activityTimeline: [taskCreatedActivity, ...(taskCompletedActivity ? [taskCompletedActivity] : []), ...current.activityTimeline],
-    }))
-
-    void saveTask(draft)
-      .then((saved) => {
-        replaceTask(draft, saved)
-        setNotice('Task saved.')
-      })
-      .catch((error: Error) => {
-        handlePersistenceFailure('Task', error)
-      })
-  }
-
-  const handleUpdateTaskStatus = (task: Task, status: TaskStatus) => {
-    if (!ensureAuthenticatedForSupabaseSave()) {
-      return
-    }
-
-    const updatedTask = { ...task, status, updated_at: new Date().toISOString() }
-    const completionActivity =
-      status === 'Completed' && task.status !== 'Completed'
-        ? createWorkflowActivity('tasks', task.id, 'completed', 'Task completed', task.title)
-        : null
-
-    setData((current) => ({
-      ...current,
-      tasks: current.tasks.map((record) => (record.id === task.id ? updatedTask : record)),
-      activityTimeline: completionActivity ? [completionActivity, ...current.activityTimeline] : current.activityTimeline,
-    }))
-
-    void updateTask(updatedTask)
-      .then((saved) => {
-        replaceTask(updatedTask, saved)
-        setNotice('Task status updated.')
-      })
-      .catch((error: Error) => {
-        handlePersistenceFailure('Task status', error)
-      })
-  }
-
-  const handleCreateQuote = (input: NewQuoteInput, bookingInput: QuoteBookingInput | null) => {
-    if (!ensureAuthenticatedForSupabaseSave()) {
-      return
-    }
-
-    if (input.status === 'Booked' && !bookingInput?.booking_number.trim()) {
-      setNotice('A booking number is required before a quote can be marked Booked.')
-      return
-    }
-
-    const draftQuote = createLocalQuote(input, data.quotes.length + 1)
-    const linkedSiteVisit = data.siteVisits.find((siteVisit) => siteVisit.id === input.site_visit_id) ?? null
-    const shouldCreateBooking = draftQuote.status === 'Booked' && bookingInput
-    const draftBooking = shouldCreateBooking
-      ? createLocalBooking({
-          ...bookingInput,
-          site_visit_id: draftQuote.site_visit_id,
-          quote_id: draftQuote.id,
-          booking_source: 'Quote',
-        })
-      : null
-    const updatedSiteVisit =
-      linkedSiteVisit && draftQuote.status === 'Booked'
-        ? { ...linkedSiteVisit, status: 'Won' as SiteVisitStatus, updated_at: new Date().toISOString() }
-        : linkedSiteVisit && draftQuote.status === 'Sent' && shouldMoveSiteVisitToQuoteSent(linkedSiteVisit)
-          ? { ...linkedSiteVisit, status: 'Quote Sent' as SiteVisitStatus, updated_at: new Date().toISOString() }
-          : null
-
-    const activities = [
-      createWorkflowActivity(
-        'quotes',
-        draftQuote.id,
-        'created',
-        'Quote created',
-        `${draftQuote.quote_reference} - ${draftQuote.customer_full_name}`,
-      ),
-      ...(draftBooking
-        ? [
-            createWorkflowActivity(
-              'bookings',
-              draftBooking.id,
-              'created',
-              'Booking created',
-              `${draftBooking.booking_number} - ${draftBooking.customer_full_name}`,
-            ),
-          ]
-        : []),
-      ...(updatedSiteVisit
-        ? [
-            createWorkflowActivity(
-              'site_visits',
-              updatedSiteVisit.id,
-              'status_changed',
-              'Site visit status changed',
-              `${updatedSiteVisit.reference_number}: ${linkedSiteVisit?.status} to ${updatedSiteVisit.status}`,
-            ),
-          ]
-        : []),
-    ]
-
-    setData((current) => ({
-      ...current,
-      siteVisits: updatedSiteVisit
-        ? current.siteVisits.map((siteVisit) => (siteVisit.id === updatedSiteVisit.id ? updatedSiteVisit : siteVisit))
-        : current.siteVisits,
-      quotes: [draftQuote, ...current.quotes],
-      bookings: draftBooking ? [draftBooking, ...current.bookings] : current.bookings,
-      activityTimeline: [...activities, ...current.activityTimeline],
-    }))
-
-    if (updatedSiteVisit) {
-      setSelectedSiteVisit(updatedSiteVisit)
-    }
-
-    void saveQuote(draftQuote)
-      .then(async (savedQuote) => {
-        replaceQuote(draftQuote, savedQuote)
-
-        if (updatedSiteVisit) {
-          const savedSiteVisit = await updateSiteVisit(updatedSiteVisit)
-          replaceSiteVisit(updatedSiteVisit, savedSiteVisit)
-        }
-
-        if (draftBooking) {
-          const savedBooking = await saveBooking({ ...draftBooking, quote_id: savedQuote.id })
-          replaceBooking(draftBooking, savedBooking)
-        }
-
-        setNotice(draftBooking ? 'Quote booked and booking saved.' : 'Quote saved.')
-      })
-      .catch((error: Error) => {
-        handlePersistenceFailure('Quote workflow', error)
-      })
-  }
-
-  const handleUpdateQuoteStatus = (quote: Quote, status: QuoteStatus) => {
-    if (!ensureAuthenticatedForSupabaseSave()) {
-      return
-    }
-
-    if (status === 'Booked') {
-      setNotice('Enter a booking number before marking a quote Booked.')
-      return
-    }
-
-    const updatedQuote = createUpdatedQuote(quote, status)
-    const linkedSiteVisit = data.siteVisits.find((siteVisit) => siteVisit.id === quote.site_visit_id) ?? null
-    const updatedSiteVisit =
-      status === 'Sent' && linkedSiteVisit && shouldMoveSiteVisitToQuoteSent(linkedSiteVisit)
-        ? { ...linkedSiteVisit, status: 'Quote Sent' as SiteVisitStatus, updated_at: new Date().toISOString() }
-        : null
-    const activities = [
-      createWorkflowActivity(
-        'quotes',
-        quote.id,
-        'status_changed',
-        'Quote status changed',
-        `${quote.quote_reference}: ${quote.status} to ${status}`,
-      ),
-      ...(updatedSiteVisit
-        ? [
-            createWorkflowActivity(
-              'site_visits',
-              updatedSiteVisit.id,
-              'status_changed',
-              'Site visit status changed',
-              `${updatedSiteVisit.reference_number}: ${linkedSiteVisit?.status} to ${updatedSiteVisit.status}`,
-            ),
-          ]
-        : []),
-    ]
-
-    setData((current) => ({
-      ...current,
-      siteVisits: updatedSiteVisit
-        ? current.siteVisits.map((siteVisit) => (siteVisit.id === updatedSiteVisit.id ? updatedSiteVisit : siteVisit))
-        : current.siteVisits,
-      quotes: current.quotes.map((record) => (record.id === quote.id ? updatedQuote : record)),
-      activityTimeline: [...activities, ...current.activityTimeline],
-    }))
-
-    if (updatedSiteVisit) {
-      setSelectedSiteVisit(updatedSiteVisit)
-    }
-
-    void updateQuote(updatedQuote)
-      .then(async (savedQuote) => {
-        replaceQuote(updatedQuote, savedQuote)
-
-        if (updatedSiteVisit) {
-          const savedSiteVisit = await updateSiteVisit(updatedSiteVisit)
-          replaceSiteVisit(updatedSiteVisit, savedSiteVisit)
-        }
-
-        setNotice('Quote status updated.')
-      })
-      .catch((error: Error) => {
-        handlePersistenceFailure('Quote status', error)
-      })
-  }
-
-  const handleBookQuote = (quote: Quote, bookingInput: QuoteBookingInput) => {
-    if (!ensureAuthenticatedForSupabaseSave()) {
-      return
-    }
-
-    if (!bookingInput.booking_number.trim()) {
-      setNotice('A booking number is required before a quote can be marked Booked.')
-      return
-    }
-
-    const existingBooking = data.bookings.find((booking) => booking.quote_id === quote.id) ?? null
-    const linkedSiteVisit = data.siteVisits.find((siteVisit) => siteVisit.id === quote.site_visit_id) ?? null
-    const updatedQuote = createUpdatedQuote(quote, 'Booked')
-    const draftBooking: Booking = existingBooking
-      ? {
-          ...existingBooking,
-          booking_number: bookingInput.booking_number.trim(),
-          customer_full_name: bookingInput.customer_full_name.trim(),
-          booking_date: bookingInput.booking_date,
-          estimated_value: bookingInput.estimated_value,
-          actual_value: null,
-          verification_status: 'Estimated',
-          status: 'Won',
-          booking_source: 'Quote',
-          notes: bookingInput.notes.trim() ? bookingInput.notes.trim() : null,
-          updated_at: new Date().toISOString(),
-        }
-      : createLocalBooking({
-          ...bookingInput,
-          site_visit_id: quote.site_visit_id,
-          quote_id: quote.id,
-          booking_source: 'Quote',
-        })
-    const updatedSiteVisit = linkedSiteVisit
-      ? { ...linkedSiteVisit, status: 'Won' as SiteVisitStatus, updated_at: new Date().toISOString() }
-      : null
-    const activities = [
-      createWorkflowActivity(
-        'quotes',
-        quote.id,
-        'status_changed',
-        'Quote status changed',
-        `${quote.quote_reference}: ${quote.status} to Booked`,
-      ),
-      createWorkflowActivity(
-        'bookings',
-        draftBooking.id,
-        existingBooking ? 'updated' : 'created',
-        existingBooking ? 'Booking updated' : 'Booking created',
-        `${draftBooking.booking_number} - ${draftBooking.customer_full_name}`,
-      ),
-      ...(linkedSiteVisit && updatedSiteVisit && linkedSiteVisit.status !== 'Won'
-        ? [
-            createWorkflowActivity(
-              'site_visits',
-              updatedSiteVisit.id,
-              'status_changed',
-              'Site visit status changed',
-              `${updatedSiteVisit.reference_number}: ${linkedSiteVisit.status} to Won`,
-            ),
-          ]
-        : []),
-    ]
-
-    setData((current) => ({
-      ...current,
-      siteVisits: updatedSiteVisit
-        ? current.siteVisits.map((siteVisit) => (siteVisit.id === updatedSiteVisit.id ? updatedSiteVisit : siteVisit))
-        : current.siteVisits,
-      quotes: current.quotes.map((record) => (record.id === quote.id ? updatedQuote : record)),
-      bookings: existingBooking
-        ? current.bookings.map((booking) => (booking.id === existingBooking.id ? draftBooking : booking))
-        : [draftBooking, ...current.bookings],
-      activityTimeline: [...activities, ...current.activityTimeline],
-    }))
-
-    if (updatedSiteVisit) {
-      setSelectedSiteVisit(updatedSiteVisit)
-    }
-
-    void updateQuote(updatedQuote)
-      .then(async (savedQuote) => {
-        replaceQuote(updatedQuote, savedQuote)
-        const bookingToSave = { ...draftBooking, quote_id: savedQuote.id }
-        const savedBooking = existingBooking ? await updateBooking(bookingToSave) : await saveBooking(bookingToSave)
-        replaceBooking(draftBooking, savedBooking)
-
-        if (updatedSiteVisit) {
-          const savedSiteVisit = await updateSiteVisit(updatedSiteVisit)
-          replaceSiteVisit(updatedSiteVisit, savedSiteVisit)
-        }
-
-        setNotice('Quote booked and booking saved.')
-      })
-      .catch((error: Error) => {
-        handlePersistenceFailure('Booked quote', error)
-      })
-  }
-
-  const handleCreateManualBooking = (input: NewBookingInput) => {
-    if (!ensureAuthenticatedForSupabaseSave()) {
-      return
-    }
-
-    const draft = createLocalBooking(input)
-    const activity = createWorkflowActivity(
-      'bookings',
-      draft.id,
-      'created',
-      'Manual booking created',
-      `${draft.booking_number} - ${draft.customer_full_name}`,
-    )
-
-    setData((current) => ({
-      ...current,
-      bookings: [draft, ...current.bookings],
-      activityTimeline: [activity, ...current.activityTimeline],
-    }))
-    setSelectedBookingId(draft.id)
-
-    void saveBooking(draft)
-      .then((saved) => {
-        replaceBooking(draft, saved)
-        setSelectedBookingId(saved.id)
-        setNotice('Manual booking saved.')
-      })
-      .catch((error: Error) => {
-        handlePersistenceFailure('Manual booking', error)
-      })
-  }
-
-  const handleSearchResultSelect = (result: SearchResult) => {
-    if (result.type === 'site_visit') {
-      const siteVisit = data.siteVisits.find((record) => record.id === result.id)
-
-      if (siteVisit) {
-        setSelectedSiteVisit(siteVisit)
-        setActivePage('work')
-      }
-      return
-    }
-
-    if (result.type === 'task') {
-      setSelectedTaskId(result.id)
-      setActivePage('tasks')
-
-      if (result.siteVisitId) {
-        const siteVisit = data.siteVisits.find((record) => record.id === result.siteVisitId)
-        setSelectedSiteVisit(siteVisit ?? selectedSiteVisit)
-      }
-      return
-    }
-
-    if (result.type === 'booking') {
-      setSelectedBookingId(result.id)
-      setActivePage('kpi')
-      return
-    }
-
-    setSelectedQuoteId(result.id)
-
-    if (result.siteVisitId) {
-      const siteVisit = data.siteVisits.find((record) => record.id === result.siteVisitId)
-      setSelectedSiteVisit(siteVisit ?? selectedSiteVisit)
-      setActivePage('work')
-      return
-    }
-
-    setActivePage('kpi')
-  }
-
-  const renderPage = () => {
-    switch (activePage) {
-      case 'dashboard':
-        return (
-          <DashboardPage
-            data={data}
-            kpis={kpis}
-            targets={kpiTargets}
-            monthLabel={monthRange.label}
-            searchQuery={searchQuery}
-            selectedSiteVisit={selectedSiteVisit}
-            onPreviousMonth={handlePreviousMonth}
-            onCurrentMonth={handleCurrentMonth}
-            onNextMonth={handleNextMonth}
-            onSearchChange={setSearchQuery}
-            onAddSiteVisit={handleAddSiteVisit}
-            onAddTask={handleAddTask}
-            onCreateManualBooking={handleCreateManualBooking}
-            onSelectSearchResult={handleSearchResultSelect}
-            onSelectSiteVisit={setSelectedSiteVisit}
-            onUpdateSiteVisitStatus={handleUpdateSiteVisitStatus}
-            onUpdateTaskStatus={handleUpdateTaskStatus}
-            onCreateQuote={handleCreateQuote}
-            onUpdateQuoteStatus={handleUpdateQuoteStatus}
-            onBookQuote={handleBookQuote}
-          />
-        )
-      case 'work':
-        return (
-          <WorkPage
-            data={data}
-            selectedSiteVisit={selectedSiteVisit}
-            onAddSiteVisit={handleAddSiteVisit}
-            onAddTask={handleAddTask}
-            onSelectSiteVisit={setSelectedSiteVisit}
-            onUpdateSiteVisitStatus={handleUpdateSiteVisitStatus}
-            onUpdateTaskStatus={handleUpdateTaskStatus}
-            onCreateQuote={handleCreateQuote}
-            onUpdateQuoteStatus={handleUpdateQuoteStatus}
-            onBookQuote={handleBookQuote}
-          />
-        )
-      case 'tasks':
-        return (
-          <TasksPage
-            data={data}
-            selectedTaskId={selectedTaskId}
-            onAddTask={handleAddTask}
-            onUpdateTaskStatus={handleUpdateTaskStatus}
-          />
-        )
-      case 'kpi':
-        return (
-          <KpiPage
-            data={data}
-            kpis={kpis}
-            targets={kpiTargets}
-            monthRange={monthRange}
-            monthLabel={monthRange.label}
-            selectedBookingId={selectedBookingId}
-            selectedQuoteId={selectedQuoteId}
-            onPreviousMonth={handlePreviousMonth}
-            onCurrentMonth={handleCurrentMonth}
-            onNextMonth={handleNextMonth}
-            onSaveTargets={handleSaveKpiTargets}
-            onApplyBookingVerifications={handleApplyBookingVerifications}
-            onMarkBookingsNotFound={handleMarkBookingsNotFound}
-          />
-        )
-      case 'reports':
-        return (
-          <PlaceholderPage
-            eyebrow="Reports"
-            title="Reports"
-            description="Placeholder page for future report workflow work."
-            icon={<FileText size={32} />}
-          >
-            <h2>Report Foundation</h2>
-            <p>Report Sent status is available in the site visit workflow.</p>
-          </PlaceholderPage>
-        )
-      case 'settings':
-        return (
-          <PlaceholderPage
-            eyebrow="Settings"
-            title="Settings"
-            description="Placeholder page for app configuration."
-            icon={<Settings size={32} />}
-          >
-            <h2>Environment</h2>
-            <p>Use VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY when connecting this app to Supabase.</p>
-          </PlaceholderPage>
-        )
-      default:
-        return null
-    }
-  }
-
-  if (hasSupabaseConfig && authStatus === 'checking') {
+  if (!hasSupabaseConfig) return <Login configured={false} />;
+  if (loading)
     return (
-      <main className="auth-screen">
-        <section className="auth-panel auth-panel--status" aria-live="polite">
-          <div className="auth-panel__brand" aria-hidden="true">
-            <span>SP</span>
-          </div>
-          <div className="auth-panel__header">
-            <p className="eyebrow">Smart Performance</p>
-            <h1>Checking session</h1>
-            <p>Connecting to Supabase before loading saved performance data.</p>
-          </div>
-        </section>
-      </main>
-    )
+      <div className="loading">
+        <span className="brand-mark">V</span>
+        <p>Opening your workspace…</p>
+      </div>
+    );
+  if (!session) return <Login configured />;
+  if (!profile)
+    return (
+      <div className="access-error panel">
+        <ShieldCheck size={30} />
+        <h1>Portal access</h1>
+        <p role="alert">
+          {error ||
+            'This account has not been assigned a portal workspace. Contact Vexora for access.'}
+        </p>
+        <button onClick={() => setRetry((value) => value + 1)}>Try again</button>
+        <button className="secondary" onClick={signOut}>
+          Sign out
+        </button>
+      </div>
+    );
+  const admin = profile.role === 'admin';
+  const client = data.clients.find((row) => row.id === workspace);
+  const totalUnread = data.conversations.reduce(
+    (sum, row) => sum + unread(row.id, data, profile.id),
+    0,
+  );
+  const clients = data.clients.filter((row) =>
+    `${row.company} ${row.email}`.toLowerCase().includes(search.toLowerCase()),
+  );
+  function navigate(next: Page) {
+    setPage(next);
+    if (admin) setWorkspace(null);
+    setSearch('');
   }
-
-  if (hasSupabaseConfig && authStatus !== 'signed-in') {
-    return <LoginPage onSignedIn={handleSignedIn} />
-  }
-
   return (
-    <AppShell
-      activePage={activePage}
-      notice={notice}
-      userEmail={session?.user.email ?? null}
-      onNavigate={setActivePage}
-      onLogout={hasSupabaseConfig ? handleLogout : undefined}
-    >
-      {renderPage()}
-    </AppShell>
-  )
+    <div className="app-layout">
+      <aside className="sidebar">
+        <a
+          className="brand"
+          href="#"
+          onClick={(event) => {
+            event.preventDefault();
+            navigate('Dashboard');
+          }}
+        >
+          <span className="brand-mark">V</span>
+          <span>
+            vexora<span className="brand-dot">.</span>
+            <small>CLIENT PORTAL</small>
+          </span>
+        </a>
+        <div className="nav-label">YOUR WORKSPACE</div>
+        <nav aria-label="Main navigation">
+          {(['Dashboard', ...(admin ? ['Clients'] : []), 'Messages'] as Page[]).map((item) => {
+            const Icon =
+              item === 'Dashboard' ? LayoutDashboard : item === 'Clients' ? Users : MessageSquare;
+            return (
+              <button
+                key={item}
+                className={`nav-item ${page === item ? 'active' : ''}`}
+                onClick={() => navigate(item)}
+              >
+                <Icon size={19} />
+                {item}
+                {item === 'Messages' && totalUnread > 0 && (
+                  <span className="nav-count">{totalUnread}</span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
+        <div className="sidebar-bottom">
+          <div className="secure-note">
+            <ShieldCheck size={17} />
+            <div>
+              Private by design<small>Your work, in one secure place.</small>
+            </div>
+          </div>
+          <div className="account">
+            <span className="avatar">{profile.display_name.slice(0, 1)}</span>
+            <div>
+              {profile.display_name}
+              <small>{admin ? 'Administrator' : 'Client workspace'}</small>
+            </div>
+            <button aria-label="Sign out" className="icon-button" onClick={signOut}>
+              <LogOut size={17} />
+            </button>
+          </div>
+        </div>
+      </aside>
+      <div className="main-layout">
+        <header className="topbar">
+          <span>
+            Workspace <ChevronRight size={13} /> <strong>{client?.company || page}</strong>
+          </span>
+          <span className="topbar-right">
+            <span className="status-dot" />
+            Vexora Client Portal
+            <button
+              aria-label="Refresh portal"
+              className="icon-button"
+              onClick={() => refresh().catch((error) => setError(error.message))}
+            >
+              <RefreshCw size={16} />
+            </button>
+          </span>
+        </header>
+        <main>
+          {error && (
+            <div className="notice error" role="alert">
+              {error}
+              <button className="text-button" onClick={() => setError('')}>
+                Dismiss
+              </button>
+            </div>
+          )}
+          {client && page !== 'Messages' ? (
+            <Workspace
+              key={client.id}
+              client={client}
+              profile={profile}
+              data={data}
+              refresh={refresh}
+              onManage={() => setDialog(client.id)}
+              onMessages={() => setPage('Messages')}
+              onBack={admin ? () => setWorkspace(null) : undefined}
+            />
+          ) : page === 'Messages' ? (
+            <>
+              <div className="page-heading">
+                <div className="eyebrow">KEEP THE CONVERSATION GOING</div>
+                <h1>
+                  Messages<span className="purple-dot">.</span>
+                </h1>
+                <p>Questions, updates and the next steps. All in one place.</p>
+              </div>
+              <Chat
+                profile={profile}
+                data={data}
+                refresh={refresh}
+                workspaceId={workspace || undefined}
+              />
+            </>
+          ) : (
+            <>
+              <div className="page-heading heading-row">
+                <div>
+                  <div className="eyebrow">
+                    {page === 'Dashboard'
+                      ? 'A CLEAR VIEW OF WHAT’S NEXT'
+                      : 'GREAT WORK STARTS WITH CONNECTION'}
+                  </div>
+                  <h1>
+                    {page === 'Dashboard'
+                      ? `Welcome back, ${profile.display_name.split(' ')[0]}`
+                      : 'Your clients'}
+                    <span className="purple-dot">.</span>
+                  </h1>
+                  <p>
+                    {page === 'Dashboard'
+                      ? 'Your clients, conversations and shared work. Connected.'
+                      : 'Manage relationships and open a private client workspace.'}
+                  </p>
+                </div>
+                {admin && (
+                  <button onClick={() => setDialog('new')}>
+                    <Plus size={17} />
+                    Add client
+                  </button>
+                )}
+              </div>
+              {page === 'Dashboard' && (
+                <>
+                  <section className="overview-strip">
+                    <div>
+                      <span className="stat-icon">
+                        <Users size={21} />
+                      </span>
+                      <div>
+                        <small>Total clients</small>
+                        <strong>{data.clients.length}</strong>
+                      </div>
+                    </div>
+                    <div>
+                      <span className="stat-icon">
+                        <MessageSquare size={21} />
+                      </span>
+                      <div>
+                        <small>Unread messages</small>
+                        <strong>{totalUnread.toString().padStart(2, '0')}</strong>
+                      </div>
+                    </div>
+                    <div>
+                      <span className="stat-icon">
+                        <ShieldCheck size={21} />
+                      </span>
+                      <div>
+                        <small>Active workspaces</small>
+                        <strong>
+                          {data.clients
+                            .filter((c) => data.profiles.find((p) => p.id === c.id)?.active)
+                            .length.toString()
+                            .padStart(2, '0')}
+                        </strong>
+                      </div>
+                    </div>
+                    <span className="overview-caption">
+                      Good things happen
+                      <br />
+                      when we stay connected.
+                    </span>
+                  </section>
+                  <section className="welcome-banner">
+                    <div className="eyebrow">BUILT AROUND YOUR CLIENTS</div>
+                    <h2>
+                      A little clarity.
+                      <br />A lot of possibility.
+                    </h2>
+                    <p>
+                      Everything your clients need,
+                      <br />
+                      with a direct line to you.
+                    </p>
+                    <div className="orb orb-one" />
+                    <div className="orb orb-two" />
+                    <span className="banner-tag">
+                      <span className="status-dot" /> Your client hub
+                    </span>
+                  </section>
+                </>
+              )}
+              <div className={page === 'Dashboard' ? 'dashboard-panels' : ''}>
+                <section className="panel">
+                  <div className="panel-heading">
+                    <div>
+                      <h2>
+                        Clients <span className="count">{data.clients.length}</span>
+                      </h2>
+                      <p>A workspace for every relationship.</p>
+                    </div>
+                    {page === 'Dashboard' && (
+                      <button className="text-button" onClick={() => navigate('Clients')}>
+                        View all <ArrowUpRight size={15} />
+                      </button>
+                    )}
+                  </div>
+                  <label className="search-field">
+                    <Search size={16} />
+                    <input
+                      aria-label="Search clients"
+                      placeholder="Search clients…"
+                      value={search}
+                      onChange={(event) => setSearch(event.target.value)}
+                    />
+                  </label>
+                  <div className="client-list">
+                    {clients.length === 0 ? (
+                      <div className="empty">
+                        <Users size={27} />
+                        <h3>{search ? 'No matching clients' : 'Meet your first client'}</h3>
+                        <p>
+                          {search
+                            ? 'Try another company or email.'
+                            : 'Add a client to give them a secure home for shared work.'}
+                        </p>
+                        {!search && (
+                          <button onClick={() => setDialog('new')}>
+                            <Plus size={16} />
+                            Add client
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      clients.slice(0, page === 'Dashboard' ? 5 : undefined).map((row) => (
+                        <button
+                          className="client-row"
+                          key={row.id}
+                          onClick={() => {
+                            setWorkspace(row.id);
+                            setPage('Clients');
+                          }}
+                        >
+                          <span className="avatar client-avatar">
+                            {row.company.slice(0, 2).toUpperCase()}
+                          </span>
+                          <span className="row-copy">
+                            <strong>{row.company}</strong>
+                            <small>{row.email}</small>
+                          </span>
+                          <span
+                            className={`pill ${data.profiles.find((p) => p.id === row.id)?.active ? '' : 'muted'}`}
+                          >
+                            {data.profiles.find((p) => p.id === row.id)?.active
+                              ? 'Active'
+                              : 'Inactive'}
+                          </span>
+                          <ChevronRight size={17} />
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </section>
+                {page === 'Dashboard' && (
+                  <section className="panel">
+                    <div className="panel-heading">
+                      <div>
+                        <h2>
+                          Messages {totalUnread > 0 && <span className="count">{totalUnread}</span>}
+                        </h2>
+                        <p>A direct line to your clients.</p>
+                      </div>
+                      <button className="text-button" onClick={() => navigate('Messages')}>
+                        Inbox <ArrowUpRight size={15} />
+                      </button>
+                    </div>
+                    {data.conversations.length === 0 ? (
+                      <div className="empty">
+                        <MessageSquare size={27} />
+                        <h3>Room for a conversation</h3>
+                        <p>Client questions and your replies will appear here.</p>
+                      </div>
+                    ) : (
+                      data.conversations.slice(0, 4).map((row) => (
+                        <button
+                          className="conversation-preview"
+                          key={row.id}
+                          onClick={() => {
+                            setWorkspace(row.workspace_id);
+                            setPage('Messages');
+                          }}
+                        >
+                          <span className="avatar">
+                            {data.clients
+                              .find((c) => c.id === row.workspace_id)
+                              ?.company.slice(0, 1)}
+                          </span>
+                          <span className="row-copy">
+                            <strong>{row.subject}</strong>
+                            <small>
+                              {data.clients.find((c) => c.id === row.workspace_id)?.company}
+                              {row.archived_at ? ' · Archived' : ''}
+                            </small>
+                          </span>
+                          {unread(row.id, data, profile.id) > 0 && <span className="unread-dot" />}
+                          <ChevronRight size={16} />
+                        </button>
+                      ))
+                    )}
+                  </section>
+                )}
+              </div>
+            </>
+          )}
+          <footer>
+            <span>
+              VEXORA <span className="footer-dot">/</span> Built for better connections.
+            </span>
+            <span>Private. Personal. All in one place.</span>
+          </footer>
+        </main>
+      </div>
+      {dialog && (
+        <ClientDialog
+          client={data.clients.find((c) => c.id === dialog)}
+          profile={data.profiles.find((p) => p.id === dialog)}
+          onClose={() => setDialog(null)}
+          onSaved={refresh}
+        />
+      )}
+    </div>
+  );
 }
-
-export default App
