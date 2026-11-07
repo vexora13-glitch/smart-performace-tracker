@@ -40,7 +40,13 @@ Existing repository: `vexora13-glitch/smart-performace-tracker`; existing Vercel
 
 Vercel Development public variables were changed to the new project. The Vercel project has no Git connection; branch-specific Preview variables are unavailable until that is connected. The shared generic Preview/Production variables remain unchanged. Direct preview configuration must explicitly point at the new project. Server-only Supabase and email credentials are not configured.
 
-Preview deployment and PR details will be recorded after source checks and upload finish.
+- Application commit: `94e8196`, pushed to `origin/portal`. Subsequent documentation/verification commits remain on the same branch.
+- Draft PR: [#1 — Replace Smart Performance with Vexora Client Portal](https://github.com/vexora13-glitch/smart-performace-tracker/pull/1).
+- GitHub CI: [passed](https://github.com/vexora13-glitch/smart-performace-tracker/actions/runs/42365339407), including all Node tests, the build and four browser checks on Linux.
+- Vercel preview: [open portal preview](https://smart-performace-tracker-hdqtmss9h-vexoranz.vercel.app), deployment `dpl_8Gh2rvLvn4QAh8LVTWLxT9eQvDX5`, target Preview, status Ready.
+- Preview HTML returns HTTP 200; both Node API functions are present and return the expected HTTP 503 configuration error because the service-role key is absent. No account operation or email delivery was attempted with live credentials.
+- A real Chromium check of the protected preview verified desktop/mobile login rendering, loaded application assets, the new Supabase project URL in the built bundle, an enabled sign-in form and zero page errors. It used short-lived, origin-scoped Vercel authentication. The deployment's access protection was retained.
+- Re-run this read-only browser smoke check with `vercel.cmd env run -- node scripts/check-preview.mjs <preview-url>` on Windows, or the equivalent Vercel CLI command on other platforms. It does not sign in or mutate the database.
 
 ## Remaining release requirements
 
