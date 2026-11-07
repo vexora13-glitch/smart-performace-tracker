@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { randomBytes } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import clientsHandler from '../api/clients.mjs';
+import { loadCredential, saveCredential } from './local-credentials.mjs';
 
 const url = process.env.VITE_SUPABASE_URL;
 if (url !== 'https://ccxkaqbajugimmtsztif.supabase.co') throw new Error('Unexpected test project');
@@ -14,6 +15,7 @@ const userClient = () =>
     auth: { persistSession: false, autoRefreshToken: false },
   });
 const admin = userClient();
+process.env.PORTAL_ADMIN_INITIAL_PASSWORD ||= loadCredential('portal-admin').password;
 const checked = (result) => {
   if (result.error) throw new Error(result.error.message);
   return result.data;
@@ -109,14 +111,12 @@ await step('cross-client and role-escalation requests denied', async () => {
 });
 await step('published update is visible only in its client workspace', async () => {
   checked(
-    await admin
-      .from('portal_announcements')
-      .insert({
-        workspace_id: alice.id,
-        title: `Validation update ${run}`,
-        body: 'Private validation update.',
-        author_id: adminId,
-      }),
+    await admin.from('portal_announcements').insert({
+      workspace_id: alice.id,
+      title: `Validation update ${run}`,
+      body: 'Private validation update.',
+      author_id: adminId,
+    }),
   );
   assert.equal(checked(await alice.db.from('portal_announcements').select('*')).length, 1);
   assert.equal(checked(await bob.db.from('portal_announcements').select('*')).length, 0);
@@ -130,15 +130,13 @@ await step('private document upload, download and cross-client denial', async ()
       .upload(path, new Blob([text], { type: 'text/plain' }), { contentType: 'text/plain' }),
   );
   checked(
-    await admin
-      .from('portal_files')
-      .insert({
-        workspace_id: alice.id,
-        path,
-        name: 'validation.txt',
-        mime_type: 'text/plain',
-        size_bytes: Buffer.byteLength(text),
-      }),
+    await admin.from('portal_files').insert({
+      workspace_id: alice.id,
+      path,
+      name: 'validation.txt',
+      mime_type: 'text/plain',
+      size_bytes: Buffer.byteLength(text),
+    }),
   );
   assert.equal(
     await checked(await alice.db.storage.from('portal-private').download(path)).text(),
@@ -162,13 +160,11 @@ await step('two-way messages, durable email job and read receipts', async () => 
     }),
   )[0].conversation_id;
   checked(
-    await admin
-      .from('portal_messages')
-      .insert({
-        conversation_id: thread,
-        author_id: adminId,
-        body: 'Yes, it is ready for review.',
-      }),
+    await admin.from('portal_messages').insert({
+      conversation_id: thread,
+      author_id: adminId,
+      body: 'Yes, it is ready for review.',
+    }),
   );
   assert.equal(
     checked(await alice.db.from('portal_messages').select('*').eq('conversation_id', thread))
@@ -242,15 +238,12 @@ await step('client and administrator sign out', async () => {
   assert.equal((await admin.auth.getSession()).data.session, null);
 });
 // Retain the validation records for review. No remote rows or objects are deleted.
-writeFileSync(
-  'artifacts/live-accounts.local',
-  JSON.stringify({
-    run,
-    accounts: accounts.map(({ id, email, password }) => ({ id, email, password })),
-    thread,
-    path,
-  }),
-);
+saveCredential('live-accounts', {
+  run,
+  accounts: accounts.map(({ id, email, password }) => ({ id, email, password })),
+  thread,
+  path,
+});
 writeFileSync(
   'artifacts/live-results.json',
   JSON.stringify(

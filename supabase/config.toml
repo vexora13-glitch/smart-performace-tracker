@@ -13,10 +13,12 @@ major_version = 17
 
 [auth]
 enabled = true
-site_url = "https://smart-performace-tracker-hdqtmss9h-vexoranz.vercel.app"
+site_url = "https://smart-performace-tracker-cirkdbyf5-vexoranz.vercel.app"
 additional_redirect_urls = ["http://localhost:5173"]
 jwt_expiry = 3600
 enable_signup = false
+minimum_password_length = 12
+password_requirements = "lower_upper_letters_digits"
 
 [auth.email]
 enabled = true

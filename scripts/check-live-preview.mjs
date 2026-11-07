@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { randomBytes } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
+import { loadCredential, saveCredential } from './local-credentials.mjs';
 
 const target = process.argv[2];
 if (
@@ -10,6 +11,7 @@ if (
   !/^https:\/\/smart-performace-tracker-[a-z0-9]+-vexoranz\.vercel\.app\/?$/.test(target)
 )
   throw new Error('Expected portal preview URL.');
+process.env.PORTAL_ADMIN_INITIAL_PASSWORD ||= loadCredential('portal-admin').password;
 if (!process.env.VERCEL_OIDC_TOKEN || !process.env.PORTAL_ADMIN_INITIAL_PASSWORD)
   throw new Error('Preview access and local administrator credential required.');
 const origin = new URL(target).origin;
@@ -34,7 +36,7 @@ const company = `Browser Validation ${run}`;
 const email = `portal-browser-${run}@example.com`;
 const password = `Vx9!${randomBytes(22).toString('base64url')}`;
 // Keep only local credentials, without screenshots or logs containing password fields.
-writeFileSync('artifacts/browser-account.local', JSON.stringify({ email, password, company }));
+saveCredential('browser-account', { email, password, company });
 const passed = [];
 async function step(name, action) {
   await action();
@@ -47,6 +49,10 @@ async function login(email, password) {
   await page.getByLabel('Password', { exact: true }).fill(password);
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await page.getByRole('navigation', { name: 'Main navigation' }).waitFor();
+}
+async function logout() {
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await page.getByRole('heading', { name: 'Your workspace awaits.' }).waitFor();
 }
 try {
   await step('deployed administrator login', async () => {
@@ -70,13 +76,11 @@ try {
     await page.getByRole('button', { name: new RegExp(company) }).click();
   });
   await step('deployed document upload and update publication', async () => {
-    await page
-      .getByLabel('Upload client file')
-      .setInputFiles({
-        name: 'browser-validation.txt',
-        mimeType: 'text/plain',
-        buffer: Buffer.from('Private browser workflow validation'),
-      });
+    await page.getByLabel('Upload client file').setInputFiles({
+      name: 'browser-validation.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('Private browser workflow validation'),
+    });
     await expect(page.getByText('browser-validation.txt', { exact: true })).toBeVisible({
       timeout: 20000,
     });
@@ -99,7 +103,7 @@ try {
       ctx.fillStyle = 'white';
       ctx.font = '24px sans-serif';
       ctx.fillText('Vexora validation', 48, 95);
-      const stream = canvas.captureStream(10);
+      const stream = canvas.captureStream(30);
       const recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8' });
       const chunks = [];
       const done = new Promise((resolve) => {
@@ -114,18 +118,24 @@ try {
         };
       });
       recorder.start();
-      await new Promise((resolve) => setTimeout(resolve, 600));
+      let frame = 0;
+      const animation = setInterval(() => {
+        ctx.fillStyle = '#7561ce';
+        ctx.fillRect(0, 140, 320, 40);
+        ctx.fillStyle = 'white';
+        ctx.fillRect((frame++ * 7) % 280, 150, 30, 15);
+      }, 50);
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      clearInterval(animation);
       recorder.stop();
       return done;
     });
     assert(bytes.length > 100);
-    await page
-      .getByLabel('Upload client file')
-      .setInputFiles({
-        name: 'browser-validation.webm',
-        mimeType: 'video/webm',
-        buffer: Buffer.from(bytes),
-      });
+    await page.getByLabel('Upload client file').setInputFiles({
+      name: 'browser-validation.webm',
+      mimeType: 'video/webm',
+      buffer: Buffer.from(bytes),
+    });
     await expect(page.getByText('browser-validation.webm', { exact: true })).toBeVisible({
       timeout: 20000,
     });
@@ -133,7 +143,7 @@ try {
   await step(
     'client initial-password login, document download and private video playback',
     async () => {
-      await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+      await logout();
       await login(email, password);
       await expect(page.getByRole('heading', { name: `${company}.` })).toBeVisible();
       await expect(page.getByRole('button', { name: 'Manage client' })).toHaveCount(0);
@@ -152,9 +162,13 @@ try {
         .poll(() => video.evaluate((v) => v.readyState), { timeout: 20000 })
         .toBeGreaterThanOrEqual(2);
       await video.evaluate(async (v) => {
+        v.pause();
+        v.currentTime = 0;
+        v.loop = true;
         v.muted = true;
         await v.play();
       });
+      await expect.poll(() => video.evaluate((v) => v.currentTime)).toBeGreaterThan(0.1);
       await page.getByRole('button', { name: 'Close video' }).click();
       await expect(page.getByRole('heading', { name: 'Browser workflow verified' })).toBeVisible();
     },
@@ -173,7 +187,7 @@ try {
     await expect(page.getByRole('status')).toContainText('Message sent', { timeout: 20000 });
   });
   await step('deployed administrator replies and archives conversation', async () => {
-    await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+    await logout();
     await login('allan@vexoradigital.com', process.env.PORTAL_ADMIN_INITIAL_PASSWORD);
     await page
       .getByRole('navigation')
@@ -189,7 +203,7 @@ try {
     await expect(page.getByText('This conversation is archived.', { exact: false })).toBeVisible();
   });
   await step('client reads administrator reply and archived history on mobile', async () => {
-    await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+    await logout();
     await login(email, password);
     await page.getByRole('button', { name: 'Open messages' }).click();
     await page.getByRole('button', { name: 'Archived', exact: true }).click();
@@ -201,7 +215,7 @@ try {
     await page.setViewportSize({ width: 390, height: 844 });
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     await page.screenshot({ path: 'artifacts/live-preview-client-mobile.png', fullPage: true });
-    await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+    await logout();
   });
   assert.deepEqual(errors, []);
   writeFileSync(
@@ -218,9 +232,15 @@ try {
 const service = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
+const browserRows = await service
+  .from('portal_clients')
+  .select('email')
+  .like('email', 'portal-browser-%@example.com')
+  .like('company', 'Browser Validation %');
+if (browserRows.error) throw new Error('Unable to inspect retained validation clients.');
 const emails = [
-  email,
-  ...JSON.parse(readFileSync('artifacts/live-accounts.local', 'utf8')).accounts.map((a) => a.email),
+  ...browserRows.data.map((row) => row.email),
+  ...loadCredential('live-accounts').accounts.map((a) => a.email),
 ];
 const ids =
   (await service.from('portal_clients').select('id').in('email', emails)).data?.map(
@@ -232,3 +252,21 @@ const result = await service
   .in('id', ids);
 if (result.error) throw new Error('Could not disable validation accounts');
 console.log(`Disabled ${ids.length} validation accounts; retained their data for review.`);
+const validationMessages = await service.from('portal_messages').select('id').in('author_id', ids);
+if (validationMessages.error) throw new Error('Unable to inspect validation notification jobs.');
+if (validationMessages.data.length) {
+  const held = await service
+    .from('portal_email_jobs')
+    .update({
+      available_at: 'infinity',
+      last_error: 'Validation notification held; explicitly requeue for delivery verification.',
+    })
+    .in(
+      'message_id',
+      validationMessages.data.map((row) => row.id),
+    );
+  if (held.error) throw new Error('Unable to hold validation notifications.');
+}
+console.log(
+  'Validation notification jobs held to avoid sending a test backlog when email is enabled.',
+);

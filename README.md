@@ -136,6 +136,27 @@ Before approving production, repeat the real admin/client flows against the conf
 
 Keep all development on `portal`. Commit, push and open a reviewable PR into `main`. Do not merge or promote without user approval. The local Vercel link is ignored by Git and points to the existing project; no new project is necessary.
 
-The existing Vercel project currently lacks a Git repository connection. Development variables were updated to the new Supabase public configuration. Branch-specific Preview settings require a Git connection; direct preview deployments can receive explicit public build/runtime configuration. The existing generic Preview/Production variables still refer to the original database until the release configuration is approved. Server-only credentials and email settings must be added to the intended preview first. Connecting Git and changing production environment variables are release actions to review before enabling automatic production deployments.
+The existing Vercel project currently lacks a Git repository connection. Development variables point to the new Supabase project. Supabase server credentials and the cron secret are configured for Development and Preview. The current direct preview explicitly overrides the shared public variables to use the new database; the generic Preview/Production public settings remain unchanged until release approval. Email provider configuration is still required. Connecting Git and changing production environment variables are release actions to review before enabling automatic production deployments.
+
+## Hosted verification and local credentials
+
+The portal migration is applied to `ccxkaqbajugimmtsztif`, public signup is disabled, and the nominated administrator is provisioned. The current preview is `https://smart-performace-tracker-cirkdbyf5-vexoranz.vercel.app`. See the implementation report for live workflow evidence and the remaining email/release requirements.
+
+The initial administrator credential is stored in `artifacts/portal-admin.dpapi.local`, encrypted with Windows DPAPI for the current Windows user. Passwords are not retained in plaintext files or committed. To retrieve it locally, deliberately run:
+
+```powershell
+.\scripts\show-admin-credential.ps1 -Show
+```
+
+`scripts/setup-admin.mjs` can create the exact nominated account when absent and encrypt its initial credential; it never replaces an existing administrator password. `scripts/bootstrap-admin.mjs` remains available when the verified account already exists.
+
+The following opt-in checks mutate only the intended portal project by creating named validation accounts, files and messages. They are not run automatically by CI. They use server-only credentials from `.env.local`, encrypt locally retained test credentials and retain remote validation records for review. The browser check disables validation accounts after successful completion; do not delete retained data without approval.
+
+```powershell
+node --env-file=.env.local scripts/verify-live.mjs
+vercel.cmd env run -- node --env-file=.env.local scripts/check-live-preview.mjs https://smart-performace-tracker-cirkdbyf5-vexoranz.vercel.app
+```
+
+The second check exercises the deployed browser, Vercel API, hosted Auth/database and private Storage, including generated video playback. Vercel authentication is scoped to the preview origin. If using an existing administrator credential on a different machine, provide it through the process environment rather than a tracked file.
 
 See `IMPLEMENTATION_REPORT.md` for this pass's concrete test results, source status, deployment URL and remaining blockers.

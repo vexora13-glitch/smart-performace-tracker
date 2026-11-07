@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { database, check } from '../server/runtime.mjs';
+import { saveCredential } from './local-credentials.mjs';
 
 const expected = 'https://ccxkaqbajugimmtsztif.supabase.co';
 if ((process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL) !== expected)
@@ -12,13 +13,9 @@ let user = users.find((row) => row.email?.toLowerCase() === email);
 if (!user) {
   const password = `Vx9!${randomBytes(24).toString('base64url')}`;
   // Store the credential locally before provisioning so an interrupted run does not lose it.
-  let env = readFileSync('.env.local', 'utf8').replace(
-    /^PORTAL_ADMIN_INITIAL_PASSWORD=.*\r?\n?/gm,
-    '',
-  );
-  writeFileSync('.env.local', `${env.trimEnd()}\nPORTAL_ADMIN_INITIAL_PASSWORD=${password}\n`);
+  saveCredential('portal-admin', { email, password });
   user = check(await db.auth.admin.createUser({ email, password, email_confirm: true })).user;
-  console.log('Administrator account created. Initial password saved only in ignored .env.local.');
+  console.log('Administrator account created. Initial credential encrypted for this Windows user.');
 }
 if (!user?.email_confirmed_at)
   throw new Error('Administrator email must be confirmed before provisioning.');
