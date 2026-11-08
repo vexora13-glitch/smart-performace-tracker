@@ -1,4 +1,5 @@
-import { useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { UPLOAD_ACCEPT, UPLOAD_HINT, UPLOAD_STATUS, uploadPrivate, type UploadState } from '../vexbot/uploads';
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -9,6 +10,7 @@ import {
   Play,
   Plus,
   Settings2,
+  ShieldCheck,
   Trash2,
   Upload,
   X,
@@ -28,6 +30,7 @@ export function Workspace({
   client,
   profile,
   data,
+  readOnly = false,
   refresh,
   onManage,
   onMessages,
@@ -36,6 +39,7 @@ export function Workspace({
   client: Client;
   profile: Profile;
   data: PortalData;
+  readOnly?: boolean;
   refresh: () => Promise<void>;
   onManage: () => void;
   onMessages: () => void;
@@ -54,6 +58,41 @@ export function Workspace({
   const announcements = data.announcements.filter((row) => row.workspace_id === client.id);
   const conversations = data.conversations.filter((row) => row.workspace_id === client.id);
   const unreadCount = conversations.reduce((sum, row) => sum + unread(row.id, data, profile.id), 0);
+  const [uploads, setUploads] = useState<UploadState[]>([]);
+  const [sending, setSending] = useState(false);
+  const loadUploads = useCallback(async () => {
+    setUploads(
+      unwrap(
+        await db()
+          .from('vexbot_uploads')
+          .select('id,name,status,status_detail,purpose,created_at')
+          .eq('workspace_id', client.id)
+          .order('created_at', { ascending: false })
+          .limit(50),
+      ) as UploadState[],
+    );
+  }, [client.id]);
+  useEffect(() => {
+    void loadUploads().catch(() => {});
+  }, [loadUploads]);
+  // Private client uploads: quarantined, scanned, and only used by Vexbot after staff review.
+  async function sendPrivate(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    setSending(true);
+    setError('');
+    setNotice('');
+    try {
+      const result = await uploadPrivate(file, 'workspace', client.id);
+      setNotice(`${result.name}: ${UPLOAD_STATUS[result.status]}.`);
+    } catch (error) {
+      setError((error as Error).message);
+    } finally {
+      setSending(false);
+      await loadUploads().catch(() => {});
+    }
+  }
   async function upload(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -282,6 +321,59 @@ export function Workspace({
           </button>
         </section>
       </div>
+      <section className="panel updates-panel" data-testid="workspace-uploads">
+        <div className="panel-heading">
+          <div>
+            <h2>
+              {admin ? 'Client uploads' : 'Send files to Vexora'}{' '}
+              <span className="count">{uploads.length}</span>
+            </h2>
+            <p>
+              Private to this workspace. Every file is scanned for malware and reviewed by the team
+              before Vexbot can use it.
+            </p>
+          </div>
+          {!admin && !readOnly && (
+            <label className={`upload-button ${sending ? 'disabled' : ''}`}>
+              <ShieldCheck size={16} />
+              {sending ? 'Uploading…' : 'Upload privately'}
+              <input
+                type="file"
+                aria-label="Upload a private file for Vexora"
+                accept={UPLOAD_ACCEPT}
+                disabled={sending}
+                onChange={sendPrivate}
+                data-testid="workspace-private-upload"
+              />
+            </label>
+          )}
+        </div>
+        {!admin && !readOnly && <p className="file-hint">{UPLOAD_HINT}</p>}
+        {readOnly && <p className="file-hint">Your access is read-only, so uploads are turned off.</p>}
+        {uploads.length === 0 ? (
+          <div className="empty compact">
+            <ShieldCheck size={24} />
+            <p>No private uploads yet.</p>
+          </div>
+        ) : (
+          <div className="files-list">
+            {uploads.map((row) => (
+              <div className="file-row" key={row.id} data-status={row.status}>
+                <span className="file-icon">
+                  <FileText size={21} />
+                </span>
+                <div className="row-copy">
+                  <strong>{row.name}</strong>
+                  <small>
+                    {UPLOAD_STATUS[row.status]}
+                    {row.created_at ? ` · ${new Date(row.created_at).toLocaleDateString()}` : ''}
+                  </small>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
       <section className="panel updates-panel">
         <div className="panel-heading">
           <div>

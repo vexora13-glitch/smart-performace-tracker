@@ -1,0 +1,677 @@
+/* Vexbot in the portal. Structure follows the website companion: the root takes no pointer events, so the
+   large transparent canvas never blocks the page; only the launcher, panel and the robot's body do. */
+.vexbot {
+  --vexbot-accent: #7561ce;
+  --vexbot-accent-hover: #6451b7;
+  --vexbot-text: #252333;
+  --vexbot-muted: #8a8299;
+  --vexbot-border: #eae8ef;
+  --vexbot-soft: #f4f1fb;
+  position: fixed;
+  inset: 0;
+  z-index: 25;
+  pointer-events: none;
+  color: var(--vexbot-text);
+}
+.vexbot-canvas {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 50% calc(100% - 26.5px);
+  will-change: transform;
+  transition: opacity 0.22s ease;
+  z-index: 2;
+}
+.vexbot-body {
+  position: absolute;
+  left: 0;
+  top: 0;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  cursor: pointer;
+  pointer-events: auto;
+  z-index: 3;
+}
+.vexbot-body:hover {
+  background: transparent;
+}
+.vexbot[data-robot='collapsed'] .vexbot-canvas,
+.vexbot[data-robot='collapsed'] .vexbot-body {
+  display: none;
+}
+
+/* Launcher: under the robot on the sidebar perch, or in a reserved bar the page makes room for. */
+.vexbot-dock {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  pointer-events: auto;
+  z-index: 1;
+}
+.vexbot[data-dock='perch'] .vexbot-dock {
+  justify-content: center;
+}
+.vexbot[data-dock='bar'] .vexbot-dock {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 72px;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 0 16px 0 68px;
+  border-top: 1px solid var(--vexbot-border);
+  background: #fff;
+}
+.vexbot[data-dock='bar'][data-robot='collapsed'] .vexbot-dock {
+  padding-left: 16px;
+}
+.vexbot-dock-status {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 12px;
+  color: var(--vexbot-muted);
+}
+.vexbot-launcher {
+  min-height: 44px;
+  border-radius: 999px;
+  padding: 0 18px;
+  box-shadow: 0 6px 18px #6d54ad2e;
+}
+.vexbot :focus-visible {
+  outline: 2px solid var(--vexbot-accent);
+  outline-offset: 2px;
+}
+
+/* The panel. A side column on wide screens; a bottom sheet that rides above the keyboard on phones. */
+.vexbot-panel {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto;
+  background: #fff;
+  z-index: 1;
+}
+.vexbot-panel.side {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 400px;
+  border-left: 1px solid var(--vexbot-border);
+  box-shadow: -12px 0 32px #2523330d;
+}
+.vexbot-panel.sheet {
+  left: 0;
+  right: 0;
+  bottom: var(--vexbot-keyboard, 0px);
+  max-height: min(80dvh, 640px);
+  border-top: 1px solid var(--vexbot-border);
+  border-radius: 16px 16px 0 0;
+  box-shadow: 0 -12px 32px #25233314;
+}
+.vexbot-header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px 0 6px;
+  border-bottom: 1px solid var(--vexbot-border);
+}
+.vexbot-stage {
+  flex: none;
+  width: 104px;
+  height: 128px;
+}
+.sheet .vexbot-stage {
+  width: 58px;
+  height: 74px;
+}
+.vexbot-stage.empty {
+  width: 8px;
+  height: 56px;
+}
+.vexbot-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.vexbot-title h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+.vexbot-workspace select {
+  max-width: 100%;
+  margin-top: 4px;
+  padding: 4px 8px;
+  border: 1px solid var(--vexbot-border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--vexbot-text);
+  font-size: 12px;
+}
+.vexbot-icon,
+.vexbot-send {
+  flex: none;
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  min-height: 40px;
+  padding: 0;
+  border-radius: 10px;
+  color: #6b6380;
+  background: transparent;
+}
+.vexbot-icon:hover:not(:disabled) {
+  color: var(--vexbot-text);
+  background: var(--vexbot-soft);
+}
+.vexbot-icon.small {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+}
+.vexbot-icon.recording {
+  color: #fff;
+  background: #c2415d;
+}
+.vexbot-send {
+  color: #fff;
+  background: var(--vexbot-accent);
+  border-radius: 999px;
+}
+.vexbot-send:hover:not(:disabled) {
+  background: var(--vexbot-accent-hover);
+}
+.vexbot-send:disabled,
+.vexbot-icon:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.vexbot-history {
+  flex: none;
+  max-height: 40%;
+  overflow-y: auto;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--vexbot-border);
+  background: #fbfaff;
+}
+.vexbot-history p {
+  margin: 8px;
+  color: var(--vexbot-muted);
+  font-size: 12px;
+}
+.vexbot-history button {
+  width: 100%;
+  justify-content: space-between;
+  min-height: 38px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--vexbot-text);
+  font-weight: 500;
+  text-align: left;
+}
+.vexbot-history button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vexbot-history button small {
+  flex: none;
+  color: var(--vexbot-muted);
+  font-weight: 400;
+}
+.vexbot-history button:hover,
+.vexbot-history button.active {
+  background: var(--vexbot-soft);
+}
+
+.vexbot-log {
+  flex: 1 1 auto;
+  min-height: 96px;
+  overflow-y: auto;
+  padding: 14px 16px;
+  font-size: 14px;
+  line-height: 1.55;
+  overscroll-behavior: contain;
+}
+.vexbot-starters p {
+  margin: 0 0 12px;
+  color: #6b6380;
+}
+.vexbot-starters ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.vexbot-starters button {
+  width: 100%;
+  justify-content: flex-start;
+  min-height: 42px;
+  border: 1px solid var(--vexbot-border);
+  background: #fff;
+  color: var(--vexbot-text);
+  font-weight: 500;
+  text-align: left;
+}
+.vexbot-starters button:hover {
+  border-color: var(--vexbot-accent);
+  background: var(--vexbot-soft);
+}
+.vexbot-message {
+  position: relative;
+  margin-bottom: 14px;
+  overflow-wrap: anywhere;
+}
+.vexbot-message p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+.vexbot-message.user {
+  width: fit-content;
+  max-width: 86%;
+  margin-left: auto;
+  padding: 8px 12px;
+  border-radius: 14px 14px 4px 14px;
+  background: var(--vexbot-soft);
+}
+.vexbot-message.assistant {
+  padding-right: 30px;
+}
+.vexbot-message.withdrawn p {
+  color: var(--vexbot-muted);
+  font-style: italic;
+}
+.vexbot-message.thinking {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--vexbot-muted);
+}
+.spin {
+  animation: vexbot-spin 1s linear infinite;
+}
+@keyframes vexbot-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.vexbot-sources {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--vexbot-border);
+  border-radius: 10px;
+  font-size: 12px;
+}
+.vexbot-sources > span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--vexbot-accent);
+  font-weight: 600;
+}
+.vexbot-sources ol {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+.vexbot-sources summary {
+  cursor: pointer;
+  font-weight: 500;
+}
+.vexbot-sources blockquote {
+  margin: 4px 0 2px;
+  padding-left: 8px;
+  border-left: 2px solid var(--vexbot-border);
+  color: #6b6380;
+}
+.vexbot-contact {
+  min-height: 32px;
+  margin-top: 8px;
+  padding: 4px 12px;
+  border: 1px solid var(--vexbot-accent);
+  background: #fff;
+  color: var(--vexbot-accent);
+  font-size: 12px;
+}
+.vexbot-contact:hover {
+  background: var(--vexbot-soft);
+}
+.vexbot-play {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 26px;
+  min-height: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--vexbot-muted);
+}
+.vexbot-play:hover {
+  background: var(--vexbot-soft);
+  color: var(--vexbot-accent);
+}
+
+.vexbot-status {
+  flex: none;
+  min-height: 18px;
+  margin: 0;
+  padding: 0 16px 4px;
+  color: #6b6380;
+  font-size: 12px;
+}
+.vexbot-composer {
+  flex: none;
+  padding: 0 12px 8px;
+}
+.vexbot-attachments {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 6px;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+.vexbot-attachments li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 4px 4px 10px;
+  border: 1px solid var(--vexbot-border);
+  border-radius: 10px;
+}
+.vexbot-attachments span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.vexbot-attachments small {
+  flex: 1 1 auto;
+  color: var(--vexbot-muted);
+}
+.vexbot-attachments li[data-status='infected'] small,
+.vexbot-attachments li[data-status='rejected'] small {
+  color: #b4233f;
+}
+.vexbot-input {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  padding: 6px 6px 6px 12px;
+  border: 1px solid #ddd8e8;
+  border-radius: 18px;
+  background: #fff;
+}
+.vexbot-input:focus-within {
+  border-color: var(--vexbot-accent);
+  box-shadow: 0 0 0 3px #7561ce1f;
+}
+.vexbot-input textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 40px;
+  max-height: 160px;
+  padding: 9px 0;
+  border: 0;
+  outline: 0;
+  resize: none;
+  field-sizing: content;
+  background: transparent;
+  color: var(--vexbot-text);
+  font-size: 16px;
+  line-height: 1.4;
+}
+.vexbot-actions {
+  display: flex;
+  flex: none;
+  gap: 2px;
+}
+.vexbot-controls {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  padding: 0 12px 6px;
+}
+.vexbot-controls button {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--vexbot-border);
+  border-radius: 999px;
+  background: #fff;
+  color: #6b6380;
+  font-size: 12px;
+  font-weight: 500;
+}
+.vexbot-controls button[aria-pressed='true'] {
+  border-color: var(--vexbot-accent);
+  color: var(--vexbot-accent);
+  background: var(--vexbot-soft);
+}
+.vexbot-disclosure {
+  flex: none;
+  margin: 0;
+  padding: 0 16px 10px;
+  color: var(--vexbot-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+@media (max-height: 560px) {
+  .sheet .vexbot-disclosure {
+    display: none;
+  }
+  .sheet .vexbot-log {
+    min-height: 56px;
+  }
+}
+
+/* The sidebar's empty space between navigation and account is the robot's perch. */
+.vexbot-perch {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+@media (max-width: 560px) {
+  .vexbot-perch {
+    display: none;
+  }
+}
+
+/* The page makes room for the bar, the bottom sheet and the side panel instead of being covered. */
+html[data-vexbot-reserve='bar'] .app-layout,
+html[data-vexbot-reserve='sheet'] .app-layout {
+  padding-bottom: var(--vexbot-reserve);
+}
+html[data-vexbot-reserve='side'] .main-layout {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  margin-right: var(--vexbot-reserve);
+}
+
+/* Admin section and team access. Uses the portal's existing panel, pill and form styles. */
+.vexbot-admin .page-heading .pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.vexbot-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 18px;
+}
+.vexbot-tabs button {
+  min-height: 36px;
+  padding: 6px 14px;
+  border: 1px solid #eae8ef;
+  border-radius: 999px;
+  background: #fff;
+  color: #6b6380;
+  font-weight: 600;
+}
+.vexbot-tabs button.active {
+  border-color: #7561ce;
+  background: #f4f1fb;
+  color: #5b48b0;
+}
+.vexbot-admin-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+  gap: 18px;
+  align-items: start;
+}
+@media (max-width: 1000px) {
+  .vexbot-admin-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.vexbot-doc-list {
+  display: grid;
+  gap: 4px;
+  max-height: 420px;
+  overflow-y: auto;
+}
+.vexbot-doc-list .client-row.selected {
+  background: #f4f1fb;
+}
+.pill.status-draft,
+.pill.status-retired {
+  background: #f1f0f4;
+  color: #6b6380;
+}
+.pill.status-in_review {
+  background: #fff4dc;
+  color: #8a5a00;
+}
+.vexbot-new {
+  margin-top: 14px;
+  border-top: 1px solid #eae8ef;
+  padding-top: 12px;
+}
+.vexbot-new summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  color: #5b48b0;
+}
+.vexbot-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px 18px;
+}
+.vexbot-fields label,
+.vexbot-guidance {
+  display: grid;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 12px;
+}
+.vexbot-presets {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+  margin: 0 0 16px;
+  padding: 0;
+  border: 0;
+}
+.vexbot-presets legend {
+  margin-bottom: 8px;
+  font-weight: 700;
+}
+.vexbot-presets label {
+  position: relative;
+  display: grid;
+  gap: 2px;
+  padding: 12px;
+  border: 1px solid #eae8ef;
+  border-radius: 12px;
+  cursor: pointer;
+}
+.vexbot-presets label.chosen {
+  border-color: #7561ce;
+  background: #f4f1fb;
+}
+/* Visually hidden but focusable; the whole card is the click target. */
+.vexbot-presets input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  clip-path: inset(50%);
+  pointer-events: none;
+}
+.vexbot-presets label:focus-within {
+  outline: 2px solid #7561ce;
+  outline-offset: 2px;
+}
+.vexbot-presets small {
+  color: #6b6380;
+}
+.vexbot-mfa .mfa-enroll {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+}
+.vexbot-mfa code {
+  word-break: break-all;
+}
+.vexbot-mfa .mfa-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  margin-top: 12px;
+}
+.vexbot-mfa .mfa-form label {
+  display: grid;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 12px;
+}
+.member-list {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0;
+  padding: 0;
+  list-style: none;
+}
+.member-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.member-list li span {
+  flex: 1 1 auto;
+  font-weight: 600;
+}
+.workspace-switch {
+  padding: 4px 8px;
+  border: 1px solid #eae8ef;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 11px;
+}

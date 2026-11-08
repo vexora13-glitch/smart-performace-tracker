@@ -1,0 +1,92 @@
+// AI provider for Vexbot: grounded answers, speech-to-text and text-to-speech. The OpenAI adapter uses the
+// portal's own server-only key. The mock is deterministic, labelled, and refused on Vercel production; it
+// exists so the whole flow can be built and tested locally without a key.
+import { ANSWER_SCHEMA, systemPrompt, userPrompt } from './prompt.mjs';
+
+const OPENAI = 'https://api.openai.com/v1';
+
+async function openai(env, path, init) {
+  const response = await fetch(`${OPENAI}${path}`, {
+    ...init,
+    headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, ...(init.headers || {}) },
+    signal: AbortSignal.timeout(45000),
+  });
+  if (!response.ok) throw new Error(`Provider request failed (${response.status})`);
+  return response;
+}
+
+function openaiProvider(env) {
+  const model = env.VEXBOT_OPENAI_MODEL;
+  return {
+    name: 'openai',
+    voice: Boolean(env.VEXBOT_TRANSCRIBE_MODEL && env.VEXBOT_TTS_MODEL),
+    async answer({ settings, question, sources, history }) {
+      const response = await openai(env, '/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: 'system', content: systemPrompt(settings) },
+            { role: 'user', content: userPrompt({ question, sources, history }) },
+          ],
+          response_format: { type: 'json_schema', json_schema: { name: 'vexbot_answer', strict: true, schema: ANSWER_SCHEMA } },
+        }),
+      });
+      const data = await response.json();
+      try { return JSON.parse(data.choices?.[0]?.message?.content ?? ''); } catch { return { answered: false, answer: '', sources: [] }; }
+    },
+    async transcribe(audio, mime) {
+      const form = new FormData();
+      form.append('model', env.VEXBOT_TRANSCRIBE_MODEL);
+      form.append('file', new Blob([audio], { type: mime }), `turn.${mime.includes('webm') ? 'webm' : mime.includes('ogg') ? 'ogg' : mime.includes('wav') ? 'wav' : 'm4a'}`);
+      const response = await openai(env, '/audio/transcriptions', { method: 'POST', body: form });
+      return String((await response.json()).text ?? '').trim();
+    },
+    async speak(text) {
+      const response = await openai(env, '/audio/speech', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: env.VEXBOT_TTS_MODEL, voice: env.VEXBOT_TTS_VOICE || 'alloy', input: text, response_format: 'mp3' }),
+      });
+      return { audio: Buffer.from(await response.arrayBuffer()), mime: 'audio/mpeg' };
+    },
+  };
+}
+
+/** A short sine tone as WAV, standing in for synthesised speech in local tests. */
+function tone(seconds = 0.6) {
+  const rate = 8000, samples = Math.round(rate * seconds), buffer = Buffer.alloc(44 + samples * 2);
+  buffer.write('RIFF', 0); buffer.writeUInt32LE(36 + samples * 2, 4); buffer.write('WAVEfmt ', 8);
+  buffer.writeUInt32LE(16, 16); buffer.writeUInt16LE(1, 20); buffer.writeUInt16LE(1, 22); buffer.writeUInt32LE(rate, 24);
+  buffer.writeUInt32LE(rate * 2, 28); buffer.writeUInt16LE(2, 32); buffer.writeUInt16LE(16, 34); buffer.write('data', 36); buffer.writeUInt32LE(samples * 2, 40);
+  for (let i = 0; i < samples; i++) buffer.writeInt16LE(Math.round(Math.sin((i / rate) * 2 * Math.PI * 440) * 6000 * Math.min(1, (samples - i) / 400)), 44 + i * 2);
+  return buffer;
+}
+
+function mockProvider(env) {
+  return {
+    name: 'mock',
+    voice: true,
+    // Extractive: quotes the best-ranked passage. Never invents content and declines with no sources.
+    async answer({ question, sources }) {
+      const words = new Set(question.toLowerCase().match(/[a-z0-9]{4,}/g) ?? []);
+      const ranked = sources.map((source) => ({ source, hits: [...words].filter((word) => source.content.toLowerCase().includes(word)).length })).filter((row) => row.hits > 0).sort((a, b) => b.hits - a.hits);
+      if (!ranked.length) return { answered: false, answer: '', sources: [] };
+      const best = ranked[0].source;
+      const sentence = best.content.split(/(?<=[.!?])\s+/).find((part) => [...words].some((word) => part.toLowerCase().includes(word))) ?? best.content.slice(0, 280);
+      return { answered: true, answer: `According to "${best.title}": ${sentence.trim()}`, sources: [best.id] };
+    },
+    async transcribe(audio) {
+      if (!audio.length) return '';
+      return env.VEXBOT_MOCK_TRANSCRIPT || 'What are your support hours?';
+    },
+    async speak() { return { audio: tone(), mime: 'audio/wav' }; },
+  };
+}
+
+export function createProvider(env = process.env) {
+  if (env.OPENAI_API_KEY && env.VEXBOT_OPENAI_MODEL && env.VEXBOT_PROVIDER !== 'mock') return openaiProvider(env);
+  if (env.VEXBOT_PROVIDER === 'mock' && env.VERCEL_ENV !== 'production') return mockProvider(env);
+  return null;
+}

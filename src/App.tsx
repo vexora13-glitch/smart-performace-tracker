@@ -11,9 +11,12 @@ import {
   Plus,
   Search,
   ChevronRight,
+  Bot,
 } from 'lucide-react';
 import { hasSupabaseConfig, supabase } from './lib/supabase';
-import { db, loadPortal, unread, unwrap } from './services/portal';
+import { accessMap, db, loadPortal, unread, unwrap } from './services/portal';
+import { Vexbot } from './vexbot/Vexbot';
+import { VexbotAdmin } from './components/VexbotAdmin';
 import { emptyData, type PortalData, type Profile } from './types/portal';
 import { Login } from './components/Login';
 import { ClientDialog } from './components/ClientDialog';
@@ -21,7 +24,7 @@ import { Workspace } from './components/Workspace';
 import { Chat } from './components/Chat';
 import './App.css';
 
-type Page = 'Dashboard' | 'Clients' | 'Messages';
+type Page = 'Dashboard' | 'Clients' | 'Messages' | 'Vexbot';
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -87,7 +90,12 @@ export default function App() {
       if (active) {
         setProfile(own);
         setData(next);
-        setWorkspace(own.role === 'client' ? own.id : null);
+        // Clients open their own workspace, or the first one they are a member of.
+        setWorkspace(
+          own.role === 'client'
+            ? ((next.clients.find((row) => row.id === own.id) ?? next.clients[0])?.id ?? null)
+            : null,
+        );
       }
     })()
       .catch((error) => {
@@ -167,6 +175,11 @@ export default function App() {
     );
   const admin = profile.role === 'admin';
   const client = data.clients.find((row) => row.id === workspace);
+  const access = accessMap(profile, data);
+  const readOnly = !admin && !!workspace && access[workspace] === 'read';
+  const ownWorkspaces = admin ? [] : data.clients.filter((row) => access[row.id]);
+  const vexbotPage =
+    page === 'Vexbot' ? 'Vexbot' : client && page !== 'Messages' ? 'Workspace' : page;
   const totalUnread = data.conversations.reduce(
     (sum, row) => sum + unread(row.id, data, profile.id),
     0,
@@ -198,9 +211,17 @@ export default function App() {
         </a>
         <div className="nav-label">YOUR WORKSPACE</div>
         <nav aria-label="Main navigation">
-          {(['Dashboard', ...(admin ? ['Clients'] : []), 'Messages'] as Page[]).map((item) => {
+          {(
+            ['Dashboard', ...(admin ? ['Clients'] : []), 'Messages', ...(admin ? ['Vexbot'] : [])] as Page[]
+          ).map((item) => {
             const Icon =
-              item === 'Dashboard' ? LayoutDashboard : item === 'Clients' ? Users : MessageSquare;
+              item === 'Dashboard'
+                ? LayoutDashboard
+                : item === 'Clients'
+                  ? Users
+                  : item === 'Vexbot'
+                    ? Bot
+                    : MessageSquare;
             return (
               <button
                 key={item}
@@ -216,6 +237,8 @@ export default function App() {
             );
           })}
         </nav>
+        {/* Empty on purpose: Vexbot's perch between the navigation and the account block. */}
+        <div className="vexbot-perch" data-vexbot-perch aria-hidden="true" />
         <div className="sidebar-bottom">
           <div className="secure-note">
             <ShieldCheck size={17} />
@@ -227,7 +250,7 @@ export default function App() {
             <span className="avatar">{profile.display_name.slice(0, 1)}</span>
             <div>
               {profile.display_name}
-              <small>{admin ? 'Administrator' : 'Client workspace'}</small>
+              <small>{admin ? 'Administrator' : readOnly ? 'Read-only access' : 'Client workspace'}</small>
             </div>
             <button aria-label="Sign out" className="icon-button" onClick={signOut}>
               <LogOut size={17} />
@@ -241,6 +264,21 @@ export default function App() {
             Workspace <ChevronRight size={13} /> <strong>{client?.company || page}</strong>
           </span>
           <span className="topbar-right">
+            {ownWorkspaces.length > 1 && (
+              <select
+                aria-label="Switch workspace"
+                className="workspace-switch"
+                value={workspace ?? ''}
+                onChange={(event) => setWorkspace(event.target.value)}
+              >
+                {ownWorkspaces.map((row) => (
+                  <option key={row.id} value={row.id}>
+                    {row.company}
+                    {access[row.id] === 'read' ? ' (read-only)' : ''}
+                  </option>
+                ))}
+              </select>
+            )}
             <span className="status-dot" />
             Vexora Client Portal
             <button
@@ -261,12 +299,15 @@ export default function App() {
               </button>
             </div>
           )}
-          {client && page !== 'Messages' ? (
+          {admin && page === 'Vexbot' ? (
+            <VexbotAdmin clients={data.clients} profiles={data.profiles} />
+          ) : client && page !== 'Messages' ? (
             <Workspace
               key={client.id}
               client={client}
               profile={profile}
               data={data}
+              readOnly={readOnly}
               refresh={refresh}
               onManage={() => setDialog(client.id)}
               onMessages={() => setPage('Messages')}
@@ -286,6 +327,7 @@ export default function App() {
                 data={data}
                 refresh={refresh}
                 workspaceId={workspace || undefined}
+                readOnly={readOnly}
               />
             </>
           ) : (
@@ -510,10 +552,23 @@ export default function App() {
         <ClientDialog
           client={data.clients.find((c) => c.id === dialog)}
           profile={data.profiles.find((p) => p.id === dialog)}
+          members={data.members.filter((m) => m.workspace_id === dialog)}
+          profiles={data.profiles}
           onClose={() => setDialog(null)}
           onSaved={refresh}
         />
       )}
+      <Vexbot
+        profile={profile}
+        workspaces={data.clients}
+        access={access}
+        workspaceId={workspace}
+        page={vexbotPage}
+        onMessages={(target) => {
+          if (admin) setWorkspace(target);
+          setPage('Messages');
+        }}
+      />
     </div>
   );
 }

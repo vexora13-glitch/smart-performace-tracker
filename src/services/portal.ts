@@ -8,6 +8,7 @@ import type {
   PortalFile,
   Profile,
   ReadReceipt,
+  WorkspaceMember,
 } from '../types/portal';
 
 export function db() {
@@ -27,7 +28,7 @@ async function all<T>(table: string): Promise<T[]> {
       await db()
         .from(table)
         .select('*')
-        .order(table === 'portal_reads' ? 'conversation_id' : 'id')
+        .order(table === 'portal_reads' ? 'conversation_id' : table === 'portal_workspace_members' ? 'user_id' : 'id')
         .range(offset, offset + 499),
     ) as T[];
     rows.push(...page);
@@ -35,7 +36,7 @@ async function all<T>(table: string): Promise<T[]> {
   }
 }
 export async function loadPortal(): Promise<PortalData> {
-  const [profiles, clients, conversations, messages, reads, announcements, files] =
+  const [profiles, clients, conversations, messages, reads, announcements, files, members] =
     await Promise.all([
       all<Profile>('portal_profiles'),
       all<Client>('portal_clients'),
@@ -44,6 +45,7 @@ export async function loadPortal(): Promise<PortalData> {
       all<ReadReceipt>('portal_reads'),
       all<Announcement>('portal_announcements'),
       all<PortalFile>('portal_files'),
+      all<WorkspaceMember>('portal_workspace_members'),
     ]);
   return {
     profiles,
@@ -53,6 +55,7 @@ export async function loadPortal(): Promise<PortalData> {
     reads,
     announcements: announcements.sort((a, b) => b.created_at.localeCompare(a.created_at)),
     files: files.sort((a, b) => b.created_at.localeCompare(a.created_at)),
+    members,
   };
 }
 export async function api(path: string, body: object, method = 'POST') {
@@ -133,4 +136,15 @@ export function unread(conversation: string, data: PortalData, userId: string) {
       message.author_id !== userId &&
       message.created_at > read,
   ).length;
+}
+
+/** The signed-in person's access per workspace: staff and owners write; members per their access level. */
+export function accessMap(profile: Profile, data: PortalData): Record<string, 'read' | 'write'> {
+  const map: Record<string, 'read' | 'write'> = {};
+  for (const client of data.clients) {
+    if (profile.role === 'admin' || client.id === profile.id) map[client.id] = 'write';
+    const member = data.members.find((row) => row.workspace_id === client.id && row.user_id === profile.id);
+    if (member) map[client.id] = member.access === 'full' ? 'write' : 'read';
+  }
+  return map;
 }
