@@ -138,5 +138,21 @@ test('the OpenAI adapter sends fenced prompts with a strict schema and the porta
   const body = JSON.parse(calls[0].init.body);
   assert.equal(body.model, 'model-x');
   assert.equal(body.response_format.json_schema.strict, true);
-  assert.match(body.messages[1].content, /<source id="S1" title="T">/);
+  assert.match(body.messages[1].content, /<source id="S1" type="document" title="T">/);
+});
+
+test('transcription multipart filename matches the audio container, including MP3', async () => {
+  const original = globalThis.fetch;
+  const sent = [];
+  globalThis.fetch = async (_url, init) => {
+    const file = init.body.get('file');
+    sent.push([file.name, file.type]);
+    return new Response(JSON.stringify({ text: 'A recorded question.' }));
+  };
+  try {
+    const provider = createProvider({ OPENAI_API_KEY: 'test-only', VEXBOT_OPENAI_MODEL: 'test', VEXBOT_TRANSCRIBE_MODEL: 'test' });
+    for (const mime of ['audio/mpeg', 'audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg;codecs=opus', 'audio/wav'])
+      assert.equal(await provider.transcribe(Buffer.from('fixture'), mime), 'A recorded question.');
+    assert.deepEqual(sent.map(([name]) => name), ['turn.mp3', 'turn.webm', 'turn.m4a', 'turn.ogg', 'turn.wav']);
+  } finally { globalThis.fetch = original; }
 });

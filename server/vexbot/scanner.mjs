@@ -2,7 +2,7 @@
 // the upload stays quarantined. Only an explicit clean verdict can release it.
 import net from 'node:net';
 
-const EICAR = 'X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!H+H*';
+const EICAR = 'X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*';
 
 /** clamd INSTREAM over TCP. Resolves { clean: boolean, signature? } or rejects on any failure. */
 function clamd(host, port, bytes, timeoutMs = 30000) {

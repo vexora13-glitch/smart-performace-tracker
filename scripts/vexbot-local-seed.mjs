@@ -1,9 +1,30 @@
 // Seeds SYNTHETIC data into a LOCAL Supabase stack for Vexbot browser checks. Refuses any non-loopback URL,
 // so it can never write to the hosted Portal project. Each run creates fresh, tagged accounts and retires the
 // previous run's synthetic knowledge. Writes the accounts to artifacts/vexbot-seed.json (git-ignored).
+import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { createClient } from '@supabase/supabase-js';
 import { loadEnv } from 'vite';
+import { pdf, PIKE_POINT } from '../tests/helpers/pdf.mjs';
+
+/**
+ * Chrome's fake microphone input: 0.6 s of quiet, 1.6 s of a voice-like, syllable-modulated tone, then 6 s of
+ * quiet. Chrome loops it, so voice mode hears one "question" start and end per loop. 16-bit mono WAV.
+ */
+function speechLike() {
+  const rate = 16000, seconds = 8.2, samples = Math.round(rate * seconds), buffer = Buffer.alloc(44 + samples * 2);
+  buffer.write('RIFF', 0); buffer.writeUInt32LE(36 + samples * 2, 4); buffer.write('WAVEfmt ', 8);
+  buffer.writeUInt32LE(16, 16); buffer.writeUInt16LE(1, 20); buffer.writeUInt16LE(1, 22); buffer.writeUInt32LE(rate, 24);
+  buffer.writeUInt32LE(rate * 2, 28); buffer.writeUInt16LE(2, 32); buffer.writeUInt16LE(16, 34); buffer.write('data', 36); buffer.writeUInt32LE(samples * 2, 40);
+  for (let i = 0; i < samples; i++) {
+    const t = i / rate;
+    const voiced = t >= 0.6 && t < 2.2;
+    const syllables = 0.55 + 0.45 * Math.sin(2 * Math.PI * 4 * t);
+    const tone = Math.sin(2 * Math.PI * 180 * t) + 0.5 * Math.sin(2 * Math.PI * 360 * t) + 0.25 * Math.sin(2 * Math.PI * 720 * t);
+    buffer.writeInt16LE(Math.round(voiced ? tone * syllables * 9000 : 0), 44 + i * 2);
+  }
+  return buffer;
+}
 
 export default async function seed() {
   const env = { ...loadEnv('development', process.cwd(), ''), ...process.env };
@@ -59,8 +80,24 @@ export default async function seed() {
   ok(await db.from('portal_messages').insert({ conversation_id: thread.id, author_id: alice.id, body: 'Can we confirm the launch workshop time?' }), 'message');
   ok(await db.from('portal_email_jobs').update({ available_at: 'infinity' }).is('sent_at', null), 'hold email jobs');
 
+  // The "Test" workspace for the pike point.pdf acceptance check: files shared the way staff share them.
+  // The PDF's content is synthetic; the real file is not in the Portal project.
+  const tess = await user('tess');
+  ok(await db.rpc('portal_provision_client', { user_id: tess.id, contact: 'Tess Test', company: 'Test', email: tess.email }), 'test');
+  const share = async (name, mime, bytes) => {
+    const path = `${tess.id}/${randomUUID()}/${name}`;
+    ok(await db.storage.from('portal-private').upload(path, bytes, { contentType: mime }), `share ${name}`);
+    ok(await db.from('portal_files').insert({ workspace_id: tess.id, name, path, mime_type: mime, size_bytes: bytes.length }), name);
+  };
+  await share('pike point.pdf', 'application/pdf', pdf(PIKE_POINT));
+  await share('part-one.txt', 'text/plain', Buffer.from('Part one\n\nThe discovery phase covers interviews with five staff members and a review of the current booking process.'));
+
+  await mkdir('artifacts', { recursive: true });
+  await writeFile('artifacts/vexbot-voice.wav', speechLike());
+
   const accounts = {
     tag, password, url,
+    tess: { email: tess.email, id: tess.id, company: 'Test' },
     staff: { email: staff.email, id: staff.id },
     alice: { email: alice.email, id: alice.id, company: `Acme Studio ${tag}` },
     bob: { email: bob.email, id: bob.id, company: `Beta Works ${tag}` },

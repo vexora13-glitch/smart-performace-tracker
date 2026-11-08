@@ -11,7 +11,8 @@ async function openai(env, path, init) {
     headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, ...(init.headers || {}) },
     signal: AbortSignal.timeout(45000),
   });
-  if (!response.ok) throw new Error(`Provider request failed (${response.status})`);
+  // Only the status is kept: it tells whether the key, the model name or a rate limit is at fault.
+  if (!response.ok) throw Object.assign(new Error(`Provider request failed (${response.status})`), { status: response.status });
   return response;
 }
 
@@ -34,12 +35,13 @@ function openaiProvider(env) {
         }),
       });
       const data = await response.json();
-      try { return JSON.parse(data.choices?.[0]?.message?.content ?? ''); } catch { return { answered: false, answer: '', sources: [] }; }
+      // An unreadable reply is a service failure, not a sign that the sources lack the answer.
+      try { return JSON.parse(data.choices?.[0]?.message?.content ?? ''); } catch { throw new Error('Provider returned an unreadable answer'); }
     },
     async transcribe(audio, mime) {
       const form = new FormData();
       form.append('model', env.VEXBOT_TRANSCRIBE_MODEL);
-      form.append('file', new Blob([audio], { type: mime }), `turn.${mime.includes('webm') ? 'webm' : mime.includes('ogg') ? 'ogg' : mime.includes('wav') ? 'wav' : 'm4a'}`);
+      form.append('file', new Blob([audio], { type: mime }), `turn.${mime.includes('webm') ? 'webm' : mime.includes('ogg') ? 'ogg' : mime.includes('wav') ? 'wav' : mime.includes('mpeg') || mime.includes('mp3') ? 'mp3' : 'm4a'}`);
       const response = await openai(env, '/audio/transcriptions', { method: 'POST', body: form });
       return String((await response.json()).text ?? '').trim();
     },
@@ -70,6 +72,15 @@ function mockProvider(env) {
     voice: true,
     // Extractive: quotes the best-ranked passage. Never invents content and declines with no sources.
     async answer({ question, sources }) {
+      // A file the client asked about: summarise by quoting its opening, or the sentence that matches.
+      const file = sources.find((source) => source.whole);
+      if (file) {
+        const sentences = file.content.replace(/\s+/g, ' ').split(/(?<=[.!?])\s+/).filter(Boolean);
+        const generic = new Set(['what', 'does', 'this', 'that', 'there', 'document', 'file', 'about', 'tell', 'with', 'from', 'here']);
+        const asked = (question.toLowerCase().match(/[a-z0-9]{4,}/g) ?? []).filter((word) => !generic.has(word) && !file.title.toLowerCase().includes(word));
+        const match = /summar|overview|what(?:'s| is) in/i.test(question) ? null : sentences.find((part) => asked.some((word) => part.toLowerCase().includes(word)));
+        return { answered: true, answer: `Summary of "${file.title}": ${match ?? sentences.slice(0, 3).join(' ')}`.slice(0, 1200), sources: [file.id] };
+      }
       const words = new Set(question.toLowerCase().match(/[a-z0-9]{4,}/g) ?? []);
       const ranked = sources.map((source) => ({ source, hits: [...words].filter((word) => source.content.toLowerCase().includes(word)).length })).filter((row) => row.hits > 0).sort((a, b) => b.hits - a.hits);
       if (!ranked.length) return { answered: false, answer: '', sources: [] };
@@ -83,6 +94,13 @@ function mockProvider(env) {
     },
     async speak() { return { audio: tone(), mime: 'audio/wav' }; },
   };
+}
+
+/** What answers and voice still need, by variable name only (never values). Shown to staff, not clients. */
+export function providerSetup(env = process.env) {
+  if (env.VEXBOT_PROVIDER === 'mock' && env.VERCEL_ENV !== 'production') return { mode: 'mock', missing: [] };
+  const missing = ['OPENAI_API_KEY', 'VEXBOT_OPENAI_MODEL', 'VEXBOT_TRANSCRIBE_MODEL', 'VEXBOT_TTS_MODEL'].filter((name) => !env[name]);
+  return { mode: 'openai', missing };
 }
 
 export function createProvider(env = process.env) {

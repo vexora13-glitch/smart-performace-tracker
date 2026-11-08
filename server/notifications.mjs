@@ -1,13 +1,24 @@
 import { check } from './runtime.mjs';
 import { HttpError } from './validation.mjs';
+import { emailProvider } from './email/providers.mjs';
 
 export async function deliverNotifications(db, messageId = null, send = fetch) {
-  const { RESEND_API_KEY, NOTIFICATION_FROM } = process.env;
-  if (!RESEND_API_KEY || !NOTIFICATION_FROM)
-    throw new HttpError(
-      503,
-      'Email notifications are awaiting configuration. Your message is saved.',
-    );
+  let gmailSender;
+  if (
+    process.env.EMAIL_DELIVERY_PROVIDER === 'gmail' &&
+    process.env.GMAIL_INTEGRATION_ENABLED === 'true'
+  ) {
+    const { systemGmailSender } = await import('./mail/service.mjs');
+    try {
+      gmailSender = systemGmailSender(db);
+    } catch {
+      throw new HttpError(
+        503,
+        'Gmail system delivery is awaiting explicit configuration. Your message is saved.',
+      );
+    }
+  }
+  const provider = emailProvider(process.env, { fetcher: send, gmailSender });
   const jobs = check(await db.rpc('portal_claim_email_jobs', { message: messageId }));
   let sent = 0;
   let failed = 0;
@@ -28,22 +39,12 @@ export async function deliverNotifications(db, messageId = null, send = fetch) {
           .single(),
       );
       // No private message body in email. Recipient is fixed, never supplied by the client.
-      const response = await send('https://api.resend.com/emails', {
-        method: 'POST',
-        signal: AbortSignal.timeout(10000),
-        headers: {
-          Authorization: `Bearer ${RESEND_API_KEY}`,
-          'Content-Type': 'application/json',
-          'Idempotency-Key': `portal-question-${job.id}`,
-        },
-        body: JSON.stringify({
-          from: NOTIFICATION_FROM,
-          to: ['allan@vexoradigital.com'],
-          subject: 'New client question · Vexora',
-          text: `${profile.display_name} sent a new question. Sign in to your Vexora Client Portal to read and reply.`,
-        }),
+      await provider.send({
+        to: ['allan@vexoradigital.com'],
+        subject: 'New client question · Vexora',
+        text: `${profile.display_name} sent a new question. Sign in to your Vexora Client Portal to read and reply.`,
+        idempotencyKey: `portal-question-${job.id}`,
       });
-      if (!response.ok) throw new Error('Email provider rejected notification');
       check(
         await db
           .from('portal_email_jobs')
@@ -51,7 +52,7 @@ export async function deliverNotifications(db, messageId = null, send = fetch) {
           .eq('id', job.id),
       );
       sent++;
-    } catch {
+    } catch (error) {
       check(
         await db
           .from('portal_email_jobs')
@@ -59,6 +60,12 @@ export async function deliverNotifications(db, messageId = null, send = fetch) {
             locked_until: null,
             last_error: 'Delivery failed. Check email provider configuration/logs.',
             available_at: new Date(Date.now() + 15 * 60000).toISOString(),
+            ...(provider.name === 'gmail' && error.code === 'gmail_delivery_uncertain'
+              ? {
+                  attempts: 5,
+                  last_error: 'Gmail delivery outcome uncertain. Review before retrying.',
+                }
+              : {}),
           })
           .eq('id', job.id),
       );

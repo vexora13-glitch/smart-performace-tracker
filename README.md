@@ -1,5 +1,7 @@
 # Vexora Client Portal
 
+The optional, disabled Gmail integration foundation is documented in [docs/gmail-foundation.md](docs/gmail-foundation.md). Its proposed migration is **unapplied**; no live mailbox connection or dashboard is enabled. See [GMAIL_FOUNDATION_REPORT.md](GMAIL_FOUNDATION_REPORT.md) for the local implementation audit and validation results.
+
 Phase 1 administrator and client application. React 19, TypeScript, Vite, Supabase Auth/Postgres/private Storage and Vercel Node functions. The existing repository and Vercel project are retained. The old Smart Performance UI, workflows, AI integration, tests and migrations have been replaced.
 
 ## Infrastructure

@@ -3,14 +3,14 @@
 // portal's sidebar perch. The panel is the portal's own: workspace-scoped, grounded chat with history,
 // citations, private attachments and turn-based voice, all served by this portal's /api/vexbot.
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
-import { ArrowUp, BookOpen, History, Loader2, MessageCircle, MessageSquare, Mic, Paperclip, Plus, Square, Volume2, X } from 'lucide-react';
+import { ArrowUp, BookOpen, Download, FileText, History, Loader2, MessageCircle, MessageSquare, Mic, MicOff, Paperclip, Plus, Square, Volume2, X } from 'lucide-react';
 import type { BotStage } from './bot-stage.ts';
 import { CompanionDirector } from './companion/director.ts';
 import { scanProtected, type Rect, type Scan } from './companion/safe-layout.ts';
 import { choosePortalDock, MIN_BAR_VIEWPORT, perchStrip, stationTarget, type PortalDock, type PortalPage } from './companion/stations.ts';
-import { blobToBase64, TurnRecorder, VOICE_PROBLEMS, voiceBlocked, type VoiceProblem } from './voice.ts';
+import { blobToBase64, playReply, primeAudio, TurnRecorder, VOICE_PROBLEMS, voiceBlocked, VoiceSession, type VoiceProblem } from './voice.ts';
 import { UPLOAD_ACCEPT, UPLOAD_HINT, UPLOAD_STATUS, uploadPrivate, type UploadState } from './uploads.ts';
-import { api } from '../services/portal';
+import { api, db, unwrap } from '../services/portal';
 import type { Client, Profile } from '../types/portal';
 import './vexbot.css';
 
@@ -23,16 +23,30 @@ const PIXELS_PER_METRE = CANVAS_HEIGHT / VIEW_HEIGHT_METRES;
 const FLOOR_OFFSET = FLOOR_METRES * PIXELS_PER_METRE;
 const STAGE_START_DELAY_MS = 1500;
 const BAR_HEIGHT = 72;
-const PERCH_LAUNCHER = 56;
+// Room under the robot on the perch for the two stacked controls (Talk to Vexbot, Ask Vexbot).
+const PERCH_LAUNCHER = 108;
 const SIDE_PANEL_MIN_WIDTH = 1100;
 const SIDE_PANEL_WIDTH = 400;
 const PREFERENCES_KEY = 'vexora-portal-vexbot';
 
-type Citation = { document_id: string; title: string; excerpt: string };
+type Citation = { kind?: 'document' | 'file'; id?: string; document_id?: string; file_id?: string; title: string; excerpt: string };
+const citationKey = (citation: Citation) => citation.id ?? citation.document_id ?? citation.title;
 type VexMessage = { id: string; role: 'user' | 'assistant'; content: string; outcome?: 'answered' | 'no_answer' | 'unavailable'; withdrawn?: boolean; citations?: Citation[]; uses_profile?: boolean; attachments?: string[]; pending?: boolean };
 type Summary = { id: string; title: string; workspace_id: string | null; updated_at: string };
 type Status = 'idle' | 'thinking' | 'speaking';
 type Voice = 'idle' | 'recording' | 'transcribing';
+/** Hands-free voice mode beside the robot, with the panel closed. */
+type Talk = 'off' | 'starting' | 'listening' | 'hearing' | 'transcribing' | 'thinking' | 'speaking';
+const TALK_TEXT: Record<Talk, string> = {
+  off: '',
+  starting: 'Starting…',
+  listening: 'Listening. Ask your question.',
+  hearing: 'Listening…',
+  transcribing: 'Got it…',
+  thinking: 'Thinking…',
+  speaking: 'Speaking…',
+};
+export const ASK_EVENT = 'vexbot:prefill';
 type Preferences = { hidden: boolean; still: boolean; speak: boolean };
 
 function readPreferences(): Preferences {
@@ -86,9 +100,25 @@ export function Vexbot({ profile, workspaces, access, workspaceId, page, onMessa
   const [status, setStatus] = useState<Status>('idle');
   const [voice, setVoice] = useState<Voice>('idle');
   const [notice, setNotice] = useState('');
+  const [talk, setTalk] = useState<Talk>('off');
+  const [talkMuted, setTalkMuted] = useState(false);
+  const [talkHeard, setTalkHeard] = useState('');
+  const [talkReply, setTalkReply] = useState<VexMessage | null>(null);
+  const [talkNotice, setTalkNotice] = useState('');
+  const [revealSources, setRevealSources] = useState<string | null>(null);
+  const session = useRef<VoiceSession | null>(null);
+  const player = useRef<HTMLAudioElement | null>(null);
+  const playing = useRef<ReturnType<typeof playReply> | null>(null);
+  // Bumped to stop a running voice loop; each loop only acts while its own number is current.
+  const talkRun = useRef(0);
+  const talkActive = useRef(false);
+  const mutedRef = useRef(false);
+  const greetingRequest = useRef<AbortController | null>(null);
+  const conversationRef = useRef<string | null>(null);
+  const talkRef = useRef<HTMLButtonElement>(null);
 
   const hidden = preferences.hidden, still = preferences.still;
-  const inConversation = voice !== 'idle';
+  const inConversation = voice !== 'idle' || talk !== 'off';
   const options = workspaces.filter((row) => admin || access[row.id]);
   const chosen = workspace === undefined ? undefined : workspace;
   const writable = chosen === null ? admin : chosen ? access[chosen] === 'write' || admin : false;
@@ -259,12 +289,24 @@ export function Vexbot({ profile, workspaces, access, workspaceId, page, onMessa
   // Speaking arms need more room than the bar has, so there the character keeps its calmer pose.
   useEffect(() => {
     const roomy = open || dock.kind === 'perch';
-    const gesture = voice === 'recording' ? 'Listen' : voice === 'transcribing' || status === 'thinking' ? 'Think' : status === 'speaking' ? (roomy ? 'Speak' : 'Listen') : null;
+    const listening = voice === 'recording' || talk === 'listening' || talk === 'hearing' || talk === 'starting';
+    const thinking = voice === 'transcribing' || status === 'thinking' || talk === 'transcribing' || talk === 'thinking';
+    const speaking = status === 'speaking' || talk === 'speaking';
+    const gesture = listening ? 'Listen' : thinking ? 'Think' : speaking ? (roomy ? 'Speak' : 'Listen') : null;
     director.current?.setAttention(gesture);
-  }, [status, voice, open, dock, stageReady]);
+  }, [status, voice, talk, open, dock, stageReady]);
 
+  useEffect(() => { conversationRef.current = conversation; }, [conversation]);
   useEffect(() => { logRef.current?.scrollTo({ top: logRef.current.scrollHeight }); }, [messages, status]);
-  useEffect(() => () => { recorder.current?.cancel(); audio.current?.pause(); }, []);
+  useEffect(() => () => { recorder.current?.cancel(); audio.current?.pause(); talkRun.current++; greetingRequest.current?.abort(); session.current?.close(); playing.current?.stop(); player.current?.pause(); }, []);
+
+  // "Ask Vexbot about this file" from Shared files: opens text chat in that workspace with the question ready.
+  const prefill = useRef<(detail: { workspace: string; question: string }) => void>(() => {});
+  useEffect(() => {
+    const listener = (event: Event) => prefill.current((event as CustomEvent).detail);
+    window.addEventListener(ASK_EVENT, listener);
+    return () => window.removeEventListener(ASK_EVENT, listener);
+  }, []);
 
   function updatePreferences(change: Partial<Preferences>) {
     const next = { ...preferences, ...change };
@@ -282,6 +324,7 @@ export function Vexbot({ profile, workspaces, access, workspaceId, page, onMessa
 
   function chooseWorkspace(target: string | null) {
     setWorkspace(target);
+    conversationRef.current = null;
     setConversation(null);
     setMessages([]);
     setAttachments([]);
@@ -291,6 +334,9 @@ export function Vexbot({ profile, workspaces, access, workspaceId, page, onMessa
   }
 
   function openPanel() {
+    // Text chat takes over from voice mode; the conversation carries on in the panel.
+    if (talkRun.current && talk !== 'off') endTalk();
+    setTalkNotice('');
     setNotice('');
     setOpen(true);
     // Opens in the workspace being viewed; otherwise the only one; otherwise asks.
@@ -312,6 +358,9 @@ export function Vexbot({ profile, workspaces, access, workspaceId, page, onMessa
   }
 
   function activate() {
+    // While Vexbot is speaking in voice mode, touching the robot interrupts it, as a person would.
+    if (talk === 'speaking') { playing.current?.stop(); return; }
+    if (talk !== 'off') return;
     if (open) closePanel();
     else openPanel();
   }
@@ -321,6 +370,7 @@ export function Vexbot({ profile, workspaces, access, workspaceId, page, onMessa
     setNotice('');
     try {
       const result = await api('vexbot', { action: 'conversation', conversation_id: id });
+      conversationRef.current = id;
       setConversation(id);
       setMessages(result.messages);
     } catch (error) {
@@ -329,6 +379,7 @@ export function Vexbot({ profile, workspaces, access, workspaceId, page, onMessa
   }
 
   function newChat() {
+    conversationRef.current = null;
     setConversation(null);
     setMessages([]);
     setAttachments([]);
@@ -338,7 +389,7 @@ export function Vexbot({ profile, workspaces, access, workspaceId, page, onMessa
   }
 
   async function speak(message: VexMessage) {
-    if (!service?.voice) return;
+    if (!service?.voice || message.outcome === 'unavailable') return;
     try {
       const result = await api('vexbot', { action: 'speech', message_id: message.id });
       audio.current?.pause();
@@ -366,17 +417,15 @@ export function Vexbot({ profile, workspaces, access, workspaceId, page, onMessa
     setMessages((list) => [...list, temp]);
     setStatus('thinking');
     try {
-      const result = await api('vexbot', { action: 'ask', workspace_id: chosen, conversation_id: conversation, question: text, attachments: ready.map((row) => row.id) });
+      const result = await api('vexbot', { action: 'ask', workspace_id: chosen, conversation_id: conversationRef.current, question: text, attachments: ready.map((row) => row.id) });
+      conversationRef.current = result.conversation.id;
       setConversation(result.conversation.id);
       setMessages((list) => [...list.filter((m) => m.id !== temp.id), ...result.messages]);
       setAttachments([]);
       void loadHistory(chosen);
       const reply = result.messages[1] as VexMessage;
-      if ((spoken || preferences.speak) && service?.voice) await speak(reply);
-      else {
-        setStatus('speaking');
-        window.setTimeout(() => setStatus((current) => (current === 'speaking' ? 'idle' : current)), Math.min(6000, 1200 + reply.content.length * 28));
-      }
+      if (reply.outcome !== 'unavailable' && (spoken || preferences.speak) && service?.voice) await speak(reply);
+      else setStatus('idle');
     } catch (error) {
       setMessages((list) => list.filter((m) => m.id !== temp.id));
       setQuestion(text);
@@ -461,22 +510,250 @@ export function Vexbot({ profile, workspaces, access, workspaceId, page, onMessa
   const toggleVoiceRef = useRef(toggleVoice);
   toggleVoiceRef.current = toggleVoice;
 
+  // ---- Voice mode: talk to the robot with the panel closed --------------------------------------------------
+  /** The workspace voice mode talks about: the one on screen, else the current or only one. */
+  function talkWorkspace(): string | null | undefined {
+    if (workspaceId && (admin || access[workspaceId])) return workspaceId;
+    if (workspace !== undefined) return workspace;
+    if (!admin && options.length === 1) return options[0].id;
+    return admin ? null : undefined;
+  }
+
+  function endTalk(message = '') {
+    talkRun.current++;
+    talkActive.current = false;
+    greetingRequest.current?.abort();
+    greetingRequest.current = null;
+    player.current?.pause();
+    session.current?.close();
+    session.current = null;
+    playing.current?.stop();
+    playing.current = null;
+    setTalk('off');
+    setTalkMuted(false);
+    mutedRef.current = false;
+    setTalkHeard('');
+    setTalkReply(null);
+    setTalkNotice(message);
+  }
+
+  async function startTalk() {
+    if (talkActive.current) return;
+    setNotice('');
+    setRevealSources(null);
+    if (!service?.voice) {
+      const missing = (service as { setup?: { missing?: string[] } } | null)?.setup?.missing ?? [];
+      setTalkNotice(!service ? 'Checking whether voice is available…' : admin && missing.length
+        ? `Voice isn't set up for this portal yet. The server needs: ${missing.join(', ')}.`
+        : "Voice isn't available in this portal yet. You can ask Vexbot in text instead.");
+      return;
+    }
+    const target = talkWorkspace();
+    if (target === undefined) { setTalkNotice('Open a workspace first, or choose one in text chat.'); return; }
+    const blocked = voiceBlocked();
+    if (blocked) { setTalkNotice(VOICE_PROBLEMS[blocked]); return; }
+    // Inside the tap itself, so the replies that follow may play without another tap.
+    player.current ??= primeAudio();
+    const run = ++talkRun.current;
+    talkActive.current = true;
+    setTalkNotice('');
+    setTalkHeard('');
+    setTalkReply(null);
+    setTalk('starting');
+    try {
+      const opened = await VoiceSession.open();
+      if (talkRun.current !== run) { opened.close(); return; }
+      session.current = opened;
+      opened.setMuted(mutedRef.current);
+    } catch (problem) {
+      if (talkRun.current !== run) return;
+      endTalk(problem === 'denied'
+        ? 'Microphone blocked. Allow the microphone for this site in your browser (the icon in the address bar), then tap Talk to Vexbot again.'
+        : VOICE_PROBLEMS[problem as VoiceProblem] ?? VOICE_PROBLEMS.failed);
+      return;
+    }
+    if (target !== workspace) chooseWorkspace(target);
+    // No recorder runs during the greeting, so it cannot become a user question.
+    try {
+      const controller = new AbortController();
+      greetingRequest.current = controller;
+      const result = await api('vexbot', { action: 'greeting', workspace_id: target }, 'POST', controller.signal);
+      if (talkRun.current !== run) return;
+      greetingRequest.current = null;
+      if (!result.speech) throw new Error(result.speech_error || 'Greeting unavailable. Retry Talk or use Ask.');
+      setTalk('speaking');
+      const playback = playReply(player.current!, result.speech);
+      playing.current = playback;
+      await playback.done;
+      if (talkRun.current !== run) return;
+      playing.current = null;
+    } catch (error) {
+      if (talkRun.current === run) endTalk((error as Error).message);
+      return;
+    }
+    void talkLoop(run, target);
+  }
+
+  async function talkLoop(run: number, target: string | null) {
+    const live = () => talkRun.current === run;
+    let quiet = 0;
+    while (live() && session.current) {
+      const mic = session.current;
+      if (mic.muted) { await mic.whenUnmuted(); continue; }
+      setTalk('listening');
+      let clip: Blob | null;
+      try { clip = await mic.listen(() => { if (live()) setTalk('hearing'); }); }
+      catch { if (live()) endTalk('Microphone recording failed. Check your microphone, then retry Talk or use Ask.'); return; }
+      if (!live()) return;
+      if (!clip) {
+        if (mic.muted) continue;
+        // About 45 seconds without speech ends the session, so the microphone is never left open by accident.
+        if (++quiet >= 3) { endTalk("Voice ended because I didn't hear anything. Tap Talk to Vexbot to start again."); return; }
+        continue;
+      }
+      quiet = 0;
+      setTalk('transcribing');
+      let text = '';
+      try {
+        text = (await api('vexbot', { action: 'transcribe', workspace_id: target, mime: clip.type || mic.mime, audio: await blobToBase64(clip) })).text;
+      } catch (error) {
+        if (live()) endTalk(`${(error as Error).message} Retry Talk or use Ask for text.`);
+        return;
+      }
+      if (!live()) return;
+      if (!text) { setTalkNotice("I didn't catch that. Please try again."); continue; }
+      setTalkNotice('');
+      setTalkHeard(text);
+      setTalkReply(null);
+      setTalk('thinking');
+      let result;
+      try {
+        result = await api('vexbot', { action: 'ask', workspace_id: target, conversation_id: conversationRef.current, question: text, attachments: [], speak: true });
+      } catch (error) {
+        if (live()) endTalk(`${(error as Error).message} Retry Talk or use Ask for text.`);
+        return;
+      }
+      if (!live()) return;
+      conversationRef.current = result.conversation.id;
+      setConversation(result.conversation.id);
+      setMessages((list) => [...list, ...result.messages]);
+      void loadHistory(target);
+      const reply = result.messages[1] as VexMessage;
+      if (reply.outcome === 'unavailable') { endTalk(`${reply.content} Once resolved, retry Talk or use Ask.`); return; }
+      setTalkReply(reply);
+      if (result.speech && player.current) {
+        setTalk('speaking');
+        const playback = playReply(player.current, result.speech);
+        playing.current = playback;
+        try { await playback.done; }
+        catch (error) { if (live()) endTalk((error as Error).message); return; }
+        if (!live()) return;
+        playing.current = null;
+      } else { endTalk(result.speech_error || 'Spoken reply unavailable. Retry Talk or use Ask for text.'); return; }
+    }
+  }
+
+  function muteTalk() {
+    const next = !mutedRef.current;
+    mutedRef.current = next;
+    setTalkMuted(next);
+    session.current?.setMuted(next);
+  }
+
+  /** Opens text chat on the voice conversation, optionally with the latest answer's sources expanded. */
+  function talkToChat(sources = false) {
+    const reply = talkReply;
+    endTalk();
+    openPanel();
+    if (sources && reply) setRevealSources(reply.id);
+  }
+
+  prefill.current = ({ workspace: target, question: text }) => {
+    if (!admin && !access[target]) return;
+    if (!open) openPanel();
+    if (target !== workspace) chooseWorkspace(target);
+    setQuestion(text);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  };
+
+  /** Shared files open straight from a citation, through the same private download the Shared files list uses. */
+  async function openSource(citation: Citation) {
+    try {
+      const file = unwrap(await db().from('portal_files').select('name,path').eq('id', citation.file_id ?? citation.id ?? '').single()) as { name: string; path: string };
+      const blob = unwrap(await db().storage.from('portal-private').download(file.path));
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = file.name;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {
+      setNotice('That file is no longer available in this workspace.');
+    }
+  }
+
   const busy = status === 'thinking';
   const workspaceName = chosen === null ? 'Vexora knowledge' : options.find((row) => row.id === chosen)?.company;
   const statusText = voice === 'recording' ? 'Listening. Select stop when you have finished your question.' : voice === 'transcribing' ? 'Transcribing your question.' : busy ? 'Thinking.' : status === 'speaking' ? 'Answering.' : uploading ? 'Uploading attachment.' : '';
   const voiceOn = Boolean(service?.voice);
 
   return (
-    <div ref={wrapper} className="vexbot" data-testid="vexbot" data-status={voice !== 'idle' ? voice : status} data-dock={dock.kind} data-robot={canShowRobot ? 'shown' : 'collapsed'} data-open={open ? '' : undefined}>
+    <div ref={wrapper} className="vexbot" data-testid="vexbot" data-status={voice !== 'idle' ? voice : status} data-dock={dock.kind} data-robot={canShowRobot ? 'shown' : 'collapsed'} data-open={open ? '' : undefined} data-talk={talk}>
       {!hidden && <canvas ref={canvas} className="vexbot-canvas" width={CANVAS_WIDTH} height={CANVAS_HEIGHT} style={{ width: CANVAS_WIDTH, height: CANVAS_HEIGHT }} aria-hidden="true" data-testid="vexbot-canvas" />}
       {/* Pointer shortcut only. Keyboard and screen reader users have the labelled launcher. */}
       {!hidden && stageReady && <button ref={body} type="button" className="vexbot-body" tabIndex={-1} aria-hidden="true" onClick={activate} data-testid="vexbot-body" />}
+
+      {!open && (talk !== 'off' || talkNotice) && (
+        <aside className="vexbot-talk-bubble" aria-label="Vexbot voice" data-testid="vexbot-talk-bubble" data-talk={talk}
+          style={dock.kind === 'perch' ? { left: dock.rect.right + 12, top: Math.max(12, dock.rect.bottom - 190) } : undefined}>
+          {talk !== 'off' && (
+            <p className="vexbot-talk-state" role="status" data-testid="vexbot-talk-state">
+              <span className="vexbot-talk-dot" aria-hidden="true" />
+              {talkMuted ? 'Muted. Unmute to keep talking.' : TALK_TEXT[talk]}
+            </p>
+          )}
+          {talkHeard && <p className="vexbot-talk-heard" data-testid="vexbot-talk-heard"><span className="sr-only">You said: </span>“{talkHeard}”</p>}
+          {talkReply && (
+            <div className="vexbot-talk-reply" aria-live="polite" data-testid="vexbot-talk-reply" data-outcome={talkReply.outcome}>
+              <p>{talkReply.content}</p>
+              {(talkReply.citations?.length ?? 0) > 0 && (
+                <button type="button" className="vexbot-talk-link" onClick={() => talkToChat(true)} data-testid="vexbot-talk-sources">
+                  <BookOpen size={13} aria-hidden="true" /> Sources: {talkReply.citations!.map((c) => c.title).join(', ')}
+                </button>
+              )}
+            </div>
+          )}
+          {talkNotice && <p className="vexbot-talk-notice" role="alert" data-testid="vexbot-talk-notice">{talkNotice}</p>}
+          <div className="vexbot-talk-controls">
+            {talk !== 'off' && (
+              <button type="button" className="vexbot-talk-control" onClick={muteTalk} aria-pressed={talkMuted} data-testid="vexbot-talk-mute">
+                {talkMuted ? <Mic size={15} aria-hidden="true" /> : <MicOff size={15} aria-hidden="true" />} {talkMuted ? 'Unmute' : 'Mute'}
+              </button>
+            )}
+            <button type="button" className="vexbot-talk-control" onClick={() => talkToChat(false)} data-testid="vexbot-talk-chat">
+              <MessageCircle size={15} aria-hidden="true" /> Open chat
+            </button>
+            {talk !== 'off' ? (
+              <button type="button" className="vexbot-talk-control end" onClick={() => endTalk()} data-testid="vexbot-talk-end">
+                <Square size={13} aria-hidden="true" /> End
+              </button>
+            ) : (
+              <button type="button" className="vexbot-talk-control" onClick={() => setTalkNotice('')} aria-label="Dismiss"><X size={15} aria-hidden="true" /></button>
+            )}
+          </div>
+        </aside>
+      )}
 
       {!open && (
         <div ref={dockRef} className="vexbot-dock" role="group" aria-label="Vexbot assistant" data-testid="vexbot-dock"
           style={dock.kind === 'perch' ? { left: dock.rect.left + 16, width: dock.rect.right - dock.rect.left - 32, top: dock.rect.bottom + 6 } : undefined}>
           {notice && dock.kind === 'bar' && <p className="vexbot-dock-status" role="status">{notice}</p>}
-          <button ref={launcherRef} type="button" className="vexbot-launcher" onClick={openPanel} aria-haspopup="dialog" aria-expanded={open} data-testid="vexbot-launcher">
+          <button ref={talkRef} type="button" className={`vexbot-launcher vexbot-talk${talk !== 'off' ? ' active' : ''}`} onClick={() => talk !== 'off' ? endTalk() : void startTalk()} aria-pressed={talk !== 'off'}
+            aria-label={talk !== 'off' ? 'End voice conversation with Vexbot' : 'Talk to Vexbot'} data-testid="vexbot-talk" disabled={!service || talk === 'starting'}>
+            {talk !== 'off' ? <Square size={15} aria-hidden="true" /> : <Mic size={17} aria-hidden="true" />}
+            <span>{!service ? 'Checking voice?' : talk !== 'off' ? 'End voice' : 'Talk to Vexbot'}</span>
+          </button>
+          <button ref={launcherRef} type="button" className="vexbot-launcher secondary-launcher" onClick={openPanel} aria-haspopup="dialog" aria-expanded={open} data-testid="vexbot-launcher">
             <MessageCircle size={17} aria-hidden="true" />
             <span>Ask Vexbot</span>
           </button>
@@ -548,10 +825,18 @@ export function Vexbot({ profile, workspaces, access, workspaceId, page, onMessa
                       <span><BookOpen size={13} aria-hidden="true" /> Sources</span>
                       <ol>
                         {message.citations.map((citation) => (
-                          <li key={citation.document_id}>
-                            <details>
-                              <summary>{citation.title}</summary>
+                          <li key={citationKey(citation)} data-kind={citation.kind ?? 'document'}>
+                            <details open={revealSources === message.id || undefined}>
+                              <summary>
+                                {citation.kind === 'file' && <FileText size={12} aria-hidden="true" />} {citation.title}
+                                <small>{citation.kind === 'file' ? ' · Shared file' : ' · Approved knowledge'}</small>
+                              </summary>
                               <blockquote>{citation.excerpt}</blockquote>
+                              {citation.kind === 'file' && (
+                                <button type="button" className="vexbot-source-open" onClick={() => void openSource(citation)}>
+                                  <Download size={12} aria-hidden="true" /> Open {citation.title}
+                                </button>
+                              )}
                             </details>
                           </li>
                         ))}
@@ -620,7 +905,7 @@ export function Vexbot({ profile, workspaces, access, workspaceId, page, onMessa
           </div>
           <p className="vexbot-disclosure">
             AI assistant. It answers only from information Vexora has approved and cites its sources; the team confirms anything important.
-            {voiceOn ? ' Voice is turn-based: record a question, then Vexbot replies. Recordings go to the AI provider to be transcribed and are not stored.' : ''}
+            {voiceOn ? ' Voice works one question at a time: with Talk to Vexbot it listens, notices when you pause, and answers aloud. Each recording goes to the AI provider to be transcribed and is not stored.' : ''}
             {service?.provider === 'mock' ? ' Local test mode: answers come from a mock provider.' : ''}
           </p>
         </section>

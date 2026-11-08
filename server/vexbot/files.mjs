@@ -5,7 +5,7 @@ import { inflateRawSync } from 'node:zlib';
 import { HttpError } from '../validation.mjs';
 
 export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
-const MAX_EXTRACT_BYTES = 20 * 1024 * 1024;
+export const MAX_EXTRACT_BYTES = 20 * 1024 * 1024;
 const MAX_TEXT = 200_000;
 const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';

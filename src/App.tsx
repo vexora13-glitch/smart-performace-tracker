@@ -82,18 +82,26 @@ export default function App() {
     setProfile(null);
     setData(emptyData);
     (async () => {
-      const own = unwrap(
-        await db().from('portal_profiles').select('*').eq('id', userId).single(),
-      ) as Profile;
-      if (!own.active) throw new Error('Your portal account is inactive. Please contact Vexora.');
+      const own = (
+        await db().from('portal_profiles').select('*').eq('id', userId).maybeSingle()
+      ) as { data: Profile | null; error: { message: string } | null };
+      if (own.error) throw new Error(own.error.message);
+      if (!own.data)
+        throw new Error(
+          'This account has not been given portal access yet. Please contact Vexora.',
+        );
+      if (!own.data.active)
+        throw new Error('Your portal account is inactive. Please contact Vexora.');
+      const ownProfile = own.data;
       const next = await loadPortal();
       if (active) {
-        setProfile(own);
+        setProfile(ownProfile);
         setData(next);
         // Clients open their own workspace, or the first one they are a member of.
         setWorkspace(
-          own.role === 'client'
-            ? ((next.clients.find((row) => row.id === own.id) ?? next.clients[0])?.id ?? null)
+          ownProfile.role === 'client'
+            ? ((next.clients.find((row) => row.id === ownProfile.id) ?? next.clients[0])?.id ??
+                null)
             : null,
         );
       }
@@ -115,9 +123,9 @@ export default function App() {
       if (document.visibilityState !== 'visible') return;
       try {
         const own = unwrap(
-          await db().from('portal_profiles').select('*').eq('id', profile.id).single(),
-        ) as Profile;
-        if (!own.active) {
+          await db().from('portal_profiles').select('*').eq('id', profile.id).maybeSingle(),
+        ) as Profile | null;
+        if (!own?.active) {
           if (active) {
             setProfile(null);
             setData(emptyData);
@@ -287,6 +295,10 @@ export default function App() {
               onClick={() => refresh().catch((error) => setError(error.message))}
             >
               <RefreshCw size={16} />
+            </button>
+            <button aria-label="Log out" className="secondary topbar-logout" onClick={signOut}>
+              <LogOut size={15} />
+              <span>Log out</span>
             </button>
           </span>
         </header>

@@ -5,9 +5,10 @@ import { randomUUID } from 'node:crypto';
 import { authenticate, check, database, method, respondError } from '../runtime.mjs';
 import { HttpError, id as uuid, requiredText } from '../validation.mjs';
 import { chunk, declaredFile, extractText, sniff } from './files.mjs';
-import { createProvider } from './provider.mjs';
+import { createProvider, providerSetup } from './provider.mjs';
 import { createScanner } from './scanner.mjs';
 import { contactText, DETAIL, noAnswerText, PROFILE_FIELDS, profileText, TONES, validateAnswer } from './prompt.mjs';
+import { fileSources, inventory, missingTable, readableNames, readTarget, resolve, sharedPassages, uploadState } from './sources.mjs';
 
 const BUCKET = 'vexbot-private';
 const QUESTIONS_PER_HOUR = 60;
@@ -73,70 +74,136 @@ function settingsInput(input) {
 }
 
 // ---- Answers ---------------------------------------------------------------------------------------------
-/** Assistant messages whose cited documents were retired, unpublished or moved out of scope are withdrawn. */
+/** Rows from a table added by a later migration; empty when that migration has not been applied yet. */
+async function optionalRows(query) {
+  const result = await query;
+  if (missingTable(result.error)) return null;
+  return check(result);
+}
+
+/**
+ * Assistant messages are withdrawn when a cited document was retired, unpublished or moved out of scope, or
+ * a cited shared file was removed from the workspace.
+ */
 async function present(ctx, conversation, messages) {
   const ids = messages.filter((m) => m.role === 'assistant').map((m) => m.id);
   const citations = ids.length
     ? check(await ctx.db.from('vexbot_citations').select('message_id,document_id,excerpt,vexbot_documents(title,status,workspace_id)').in('message_id', ids))
     : [];
+  const fileCitations = (ids.length ? await optionalRows(ctx.db.from('vexbot_file_citations').select('message_id,file_id,file_name,excerpt').in('message_id', ids)) : null) ?? [];
+  const fileIds = [...new Set(fileCitations.map((c) => c.file_id))];
+  const live = new Map((fileIds.length ? check(await ctx.db.from('portal_files').select('id,workspace_id').in('id', fileIds)) : []).map((row) => [row.id, row.workspace_id]));
   return messages.map((message) => {
     if (message.role === 'user') return { id: message.id, role: 'user', content: message.content, attachments: message.attachments, created_at: message.created_at };
     const own = citations.filter((c) => c.message_id === message.id);
-    const valid = own.every((c) => c.vexbot_documents?.status === 'published' && (c.vexbot_documents.workspace_id === null || c.vexbot_documents.workspace_id === conversation.workspace_id));
-    if (!valid) return { id: message.id, role: 'assistant', outcome: message.outcome, withdrawn: true, content: 'This answer is no longer available because a document it relied on has been withdrawn. Ask again for a current answer.', citations: [], uses_profile: false, created_at: message.created_at };
+    const files = fileCitations.filter((c) => c.message_id === message.id);
+    const documentsValid = own.every((c) => c.vexbot_documents?.status === 'published' && (c.vexbot_documents.workspace_id === null || c.vexbot_documents.workspace_id === conversation.workspace_id));
+    const filesValid = files.every((c) => live.get(c.file_id) === conversation.workspace_id);
+    if (!documentsValid || !filesValid) {
+      const reason = documentsValid ? 'a shared file it relied on was removed from this workspace' : 'a document it relied on has been withdrawn';
+      return { id: message.id, role: 'assistant', outcome: message.outcome, withdrawn: true, content: `This answer is no longer available because ${reason}. Ask again for a current answer.`, citations: [], uses_profile: false, created_at: message.created_at };
+    }
     return {
       id: message.id, role: 'assistant', outcome: message.outcome, withdrawn: false, content: message.content, uses_profile: message.uses_profile, created_at: message.created_at,
-      citations: own.map((c) => ({ document_id: c.document_id, title: c.vexbot_documents.title, excerpt: c.excerpt })),
+      citations: [
+        ...own.map((c) => ({ kind: 'document', id: c.document_id, document_id: c.document_id, title: c.vexbot_documents.title, excerpt: c.excerpt })),
+        ...files.map((c) => ({ kind: 'file', id: c.file_id, file_id: c.file_id, title: c.file_name, excerpt: c.excerpt })),
+      ],
     };
   });
 }
 
-async function gather(ctx, workspace, question, history, settings) {
+/** Passages for an ordinary question: published documents in scope, matching shared files, the profile. */
+async function gather(ctx, workspace, question, history, settings, inv) {
   const previous = history.filter((turn) => turn.role === 'user').slice(-1).map((turn) => turn.content);
   const rows = check(await ctx.db.rpc('vexbot_search', { workspace, question: [question, ...previous].join(' '), max_results: 6 })) ?? [];
-  const sources = rows.map((row, index) => ({ id: `S${index + 1}`, document_id: row.document_id, title: row.title, content: row.content }));
+  const passages = [
+    ...rows.map((row) => ({ kind: 'document', document_id: row.document_id, file_id: null, title: row.title, content: row.content })),
+    ...(inv ? await sharedPassages(ctx.db, inv, question) : []),
+  ];
+  const sources = passages.map((source, index) => ({ id: `S${index + 1}`, ...source }));
   const profile = profileText(settings.business_profile);
-  if (profile) sources.push({ id: 'P', document_id: null, title: 'Vexora business profile', content: profile });
+  if (profile) sources.push({ id: 'P', kind: 'profile', document_id: null, file_id: null, title: 'Vexora business profile', content: profile });
   return sources;
 }
 
+const notConfiguredText = (profile) => `Vexbot's answer service isn't switched on for this portal yet, so it can't read files or answer questions right now. ${contactText(profile)}`;
+const failedText = (profile) => `Vexbot couldn't reach its answer service just now. Please try again shortly. ${contactText(profile)}`;
+
+/**
+ * Works out what a question is about and gathers its sources. Returns { reply } when the answer is a fact
+ * about the files themselves (not found, still processing, unsupported, awaiting review), or { sources, notes }.
+ */
+async function plan(ctx, { workspace, question, history, settings, attachments, recent }) {
+  const inv = await inventory(ctx.db, workspace);
+  const choice = resolve(question, inv, { attachments, recent });
+  const listed = (names) => (names.length ? ` Files I can read here: ${names.slice(0, 12).map((name) => `“${name}”`).join(', ')}.` : ' There are no files I can read in this workspace yet.');
+  if (choice.missing) return { reply: `I couldn't find a file called “${choice.missing}” in this workspace.${listed(readableNames(inv))}` };
+  if (choice.ambiguous) return { reply: choice.ambiguous.length ? `Which file do you mean?${listed(readableNames(inv))}` : `There are no files I can read in this workspace yet. Files shared by Vexora appear under Shared files, and your uploads become available after they are scanned and approved.` };
+  if (choice.targets) {
+    const read = await Promise.all(choice.targets.map((item) => readTarget(ctx.db, item)));
+    const usable = read.filter((row) => row.content);
+    const problems = read.filter((row) => row.problem).map((row) => row.problem);
+    if (!usable.length) return { reply: problems.join(' ') };
+    const profile = profileText(settings.business_profile);
+    const sources = fileSources(usable);
+    if (profile) sources.push({ id: 'P', kind: 'profile', document_id: null, file_id: null, title: 'Vexora business profile', content: profile });
+    return { sources, notes: problems };
+  }
+  // An ordinary question. Unready attachments are explained after the answer.
+  const notes = (choice.attached ?? []).filter((item) => item.kind === 'upload').map((item) => uploadState(item));
+  return { sources: await gather(ctx, workspace, question, history, settings, workspace === null ? null : inv), notes: notes.length ? [...notes, 'I can only use uploads after they pass the malware check and the Vexora team approves them for this workspace.'] : [] };
+}
+
 /** Runs one grounded answer. Never stores anything; callers decide whether to persist. */
-async function answer(ctx, { workspace, question, history, settings }) {
+async function answer(ctx, { workspace, question, history, settings, attachments = [], recent = [] }) {
   const profile = settings.business_profile ?? {};
-  if (!ctx.provider) return { outcome: 'unavailable', content: `Vexbot can't answer right now. ${contactText(profile)}`, cited: [], usesProfile: false };
-  const sources = await gather(ctx, workspace, question, history, settings);
-  if (!sources.length) return { outcome: 'no_answer', content: noAnswerText(profile), cited: [], usesProfile: false };
+  const none = { cited: [], usesProfile: false };
+  const planned = await plan(ctx, { workspace, question, history, settings, attachments, recent });
+  if (planned.reply) return { outcome: 'no_answer', content: planned.reply, ...none };
+  const note = planned.notes.length ? `\n\n${planned.notes.join(' ')}` : '';
+  if (!ctx.provider) return { outcome: 'unavailable', content: notConfiguredText(profile) + note, ...none };
+  const { sources } = planned;
+  if (!sources.length) return { outcome: 'no_answer', content: noAnswerText(profile) + note, ...none };
   let result;
   try {
     result = validateAnswer(await ctx.provider.answer({ settings, question, sources, history }), sources);
-  } catch {
-    return { outcome: 'unavailable', content: `Vexbot couldn't reach its answer service. Please try again shortly. ${contactText(profile)}`, cited: [], usesProfile: false };
+  } catch (error) {
+    // Status only: enough to tell a bad key (401), an unknown model (404) or a rate limit (429) apart.
+    console.error(`[vexbot] answer service failed${error?.status ? ` (HTTP ${error.status})` : error?.name === 'TimeoutError' ? ' (timeout)' : ''}`);
+    return { outcome: 'unavailable', content: (error?.status === 401 || error?.status === 403 ? "The answer service rejected the portal credentials. Ask the portal administrator to check its server API key and permissions." : error?.status === 429 ? "The answer service is rate limited or its quota is exhausted. Please try later; the portal administrator can check usage limits." : error?.status === 404 ? "The configured answer model is unavailable. The portal administrator needs to check the server model setting." : error?.name === "TimeoutError" ? "The answer service timed out. Please try again." : failedText(profile)) + note, ...none };
   }
-  if (!result.answered) return { outcome: 'no_answer', content: noAnswerText(profile), cited: [], usesProfile: false };
-  const byDocument = new Map();
+  if (!result.answered) return { outcome: 'no_answer', content: noAnswerText(profile) + note, ...none };
+  const cited = new Map();
   for (const id of result.cited) {
     const source = sources.find((s) => s.id === id);
-    if (source.document_id && !byDocument.has(source.document_id)) byDocument.set(source.document_id, { document_id: source.document_id, title: source.title, excerpt: source.content.slice(0, 280) });
+    const key = source.document_id ?? source.file_id;
+    if (key && !cited.has(key)) cited.set(key, { kind: source.document_id ? 'document' : 'file', id: key, document_id: source.document_id, file_id: source.file_id, title: source.title, excerpt: source.content.slice(0, 280) });
   }
-  return { outcome: 'answered', content: result.answer, cited: [...byDocument.values()], usesProfile: result.cited.includes('P') };
+  return { outcome: 'answered', content: result.answer + note, cited: [...cited.values()], usesProfile: result.cited.includes('P') };
 }
 
-const ATTACHMENT_STATE = {
-  awaiting_upload: 'did not finish uploading',
-  quarantined: 'is quarantined while it is checked for malware',
-  scanning: 'is quarantined while it is checked for malware',
-  scan_failed: 'could not be checked yet, so it stays quarantined',
-  clean: 'passed the malware check and is waiting for the Vexora team to review it',
-  infected: 'was blocked by the malware check and will not be used',
-  rejected: 'was rejected because its contents did not match its file type',
-};
-
-async function attachmentNote(ctx, workspace, ids) {
-  if (!ids.length) return '';
-  const uploads = check(await ctx.db.from('vexbot_uploads').select('id,name,status').in('id', ids).eq('workspace_id', workspace).eq('uploaded_by', ctx.user.id));
+/** Attachments must be the asker's own uploads in this workspace. */
+async function checkAttachments(ctx, workspace, ids) {
+  if (!ids.length) return;
+  const uploads = check(await ctx.db.from('vexbot_uploads').select('id').in('id', ids).eq('workspace_id', workspace).eq('uploaded_by', ctx.user.id));
   if (uploads.length !== ids.length) throw new HttpError(400, 'An attachment is not available in this workspace.');
-  const lines = uploads.map((upload) => `“${upload.name}” ${ATTACHMENT_STATE[upload.status]}.`);
-  return `\n\nAbout your ${uploads.length === 1 ? 'attachment' : 'attachments'}: ${lines.join(' ')} I can only use files after the team approves them for this workspace.`;
+}
+
+async function synthesise(ctx, text) {
+  if (!ctx.provider?.voice) return { speech_error: 'Spoken replies are not available right now.' };
+  try {
+    const { audio, mime } = await ctx.provider.speak(text.slice(0, 4000));
+    return { speech: { audio: audio.toString('base64'), mime } };
+  } catch (error) {
+    console.error(`[vexbot] speech service failed${error?.status ? ` (HTTP ${error.status})` : ''}`);
+    return { speech_error: error?.status === 401 || error?.status === 403
+      ? 'The speech service rejected the portal credentials. Ask the administrator to check the server API key and permissions, then retry Talk.'
+      : error?.status === 429 ? 'The speech service is rate limited or out of quota. Try Talk again later.'
+      : error?.status === 404 ? 'The configured speech model is unavailable. Ask the administrator to check the speech model setting.'
+      : error?.name === 'TimeoutError' ? 'The speech service timed out. Retry Talk.'
+      : 'The spoken reply could not be created. Retry Talk or use Ask for text.' };
+  }
 }
 
 async function conversationFor(ctx, id) {
@@ -171,7 +238,11 @@ async function download(ctx, path) {
 // ---- Actions ---------------------------------------------------------------------------------------------
 const ACTIONS = {
   async status(ctx) {
-    return { provider: ctx.provider?.name ?? null, voice: Boolean(ctx.provider?.voice), scanner: ctx.scanner?.name ?? null };
+    const value = { provider: ctx.provider?.name ?? null, voice: Boolean(ctx.provider?.voice), scanner: ctx.scanner?.name ?? null };
+    if (!ctx.admin) return value;
+    // Staff see what is missing (variable names only) and whether the workspace-files migration is applied.
+    const cache = await ctx.db.from('vexbot_file_text').select('file_id', { head: true, count: 'exact' });
+    return { ...value, setup: { ...ctx.setup, file_index: !missingTable(cache.error) } };
   },
 
   async conversations(ctx, input) {
@@ -194,29 +265,41 @@ const ACTIONS = {
     if (attachments.length > 5) throw new HttpError(400, 'Attach at most five files.');
     await requireAccess(ctx, workspace);
     if (workspace === null && attachments.length) throw new HttpError(400, 'Choose a workspace to attach files.');
-    const note = workspace === null ? '' : await attachmentNote(ctx, workspace, attachments);
+    if (workspace !== null) await checkAttachments(ctx, workspace, attachments);
     const since = new Date(Date.now() - 3600_000).toISOString();
     const { count } = await ctx.db.from('vexbot_messages').select('id,vexbot_conversations!inner(user_id)', { count: 'exact', head: true }).eq('role', 'user').eq('vexbot_conversations.user_id', ctx.user.id).gte('created_at', since);
     if ((count ?? 0) >= QUESTIONS_PER_HOUR) throw new HttpError(429, 'You have asked a lot of questions this hour. Please try again later or message the team.');
 
     let conversation;
     let history = [];
+    let recent = [];
     if (input.conversation_id) {
       conversation = await conversationFor(ctx, input.conversation_id);
       if (conversation.workspace_id !== workspace) throw new HttpError(400, 'This conversation belongs to another workspace.');
       // Withdrawn answers are not fed back to the model.
-      history = (await present(ctx, conversation, await messagesOf(ctx, conversation.id))).slice(-8).map((m) => ({ role: m.role, content: m.withdrawn ? '(answer withdrawn)' : m.content }));
+      const shown = (await present(ctx, conversation, await messagesOf(ctx, conversation.id))).slice(-8);
+      history = shown.map((m) => ({ role: m.role, content: m.withdrawn ? '(answer withdrawn)' : m.content }));
+      // "Summarise it" after an answer about a file means that same file.
+      recent = (shown.filter((m) => m.role === 'assistant' && !m.withdrawn).at(-1)?.citations ?? []).map((c) => ({ kind: c.kind, id: c.id }));
     } else {
       conversation = check(await ctx.db.from('vexbot_conversations').insert({ workspace_id: workspace, user_id: ctx.user.id, title: question.replace(/\s+/g, ' ').slice(0, 80) }).select('*').single());
     }
     const settings = await loadSettings(ctx);
-    const result = await answer(ctx, { workspace, question, history, settings });
+    const result = await answer(ctx, { workspace, question, history, settings, attachments, recent });
     const asked = check(await ctx.db.from('vexbot_messages').insert({ conversation_id: conversation.id, role: 'user', content: question, attachments }).select('*').single());
-    const reply = check(await ctx.db.from('vexbot_messages').insert({ conversation_id: conversation.id, role: 'assistant', content: (result.content + note).slice(0, 20000), outcome: result.outcome, uses_profile: result.usesProfile }).select('*').single());
-    if (result.cited.length) check(await ctx.db.from('vexbot_citations').insert(result.cited.map((c) => ({ message_id: reply.id, document_id: c.document_id, excerpt: c.excerpt }))));
+    const reply = check(await ctx.db.from('vexbot_messages').insert({ conversation_id: conversation.id, role: 'assistant', content: result.content.slice(0, 20000), outcome: result.outcome, uses_profile: result.usesProfile }).select('*').single());
+    const documents = result.cited.filter((c) => c.kind === 'document');
+    const files = result.cited.filter((c) => c.kind === 'file');
+    if (documents.length) check(await ctx.db.from('vexbot_citations').insert(documents.map((c) => ({ message_id: reply.id, document_id: c.document_id, excerpt: c.excerpt }))));
+    // Before the workspace-files migration the file citation is shown now but not kept with the answer.
+    if (files.length) await optionalRows(ctx.db.from('vexbot_file_citations').insert(files.map((c) => ({ message_id: reply.id, file_id: c.file_id, file_name: c.title, excerpt: c.excerpt }))));
     check(await ctx.db.from('vexbot_conversations').update({ updated_at: new Date().toISOString() }).eq('id', conversation.id));
     const [user, assistant] = await present(ctx, conversation, [asked, reply]);
-    return { conversation: { id: conversation.id, title: conversation.title, workspace_id: conversation.workspace_id }, messages: [user, assistant], contact: { email: settings.business_profile?.contact_email ?? null, phone: settings.business_profile?.contact_phone ?? null } };
+    if (!assistant.withdrawn && files.length && !assistant.citations.some((c) => c.kind === 'file'))
+      assistant.citations.push(...files.map((c) => ({ kind: 'file', id: c.file_id, file_id: c.file_id, title: c.title, excerpt: c.excerpt })));
+    // Voice mode asks for the spoken reply in the same request, so it plays without a second round trip.
+    const spoken = input.speak === true && assistant.outcome !== 'unavailable' ? await synthesise(ctx, assistant.content) : {};
+    return { conversation: { id: conversation.id, title: conversation.title, workspace_id: conversation.workspace_id }, messages: [user, assistant], contact: { email: settings.business_profile?.contact_email ?? null, phone: settings.business_profile?.contact_phone ?? null }, ...spoken };
   },
 
   async transcribe(ctx, input) {
@@ -229,9 +312,15 @@ const ACTIONS = {
     if (!audio.length || audio.length > MAX_AUDIO_BYTES) throw new HttpError(400, 'Recordings must be under one minute.');
     try {
       return { text: (await ctx.provider.transcribe(audio, mime)).slice(0, 2000) };
-    } catch {
+    } catch (error) {
+      console.error(`[vexbot] transcription service failed${error?.status ? ` (HTTP ${error.status})` : ''}`);
       throw new HttpError(502, 'That recording could not be transcribed. You can try again or type instead.');
     }
+  },
+
+  async greeting(ctx, input) {
+    await requireAccess(ctx, workspaceInput(ctx, input.workspace_id));
+    return synthesise(ctx, 'Hi, I’m Vexbot. How can I help you today?');
   },
 
   async speech(ctx, input) {
@@ -240,13 +329,11 @@ const ACTIONS = {
     const conversation = await conversationFor(ctx, message.conversation_id);
     const [shown] = await present(ctx, conversation, [message]);
     if (shown.withdrawn) throw new HttpError(410, 'This answer is no longer available, so it will not be read aloud.');
+    if (shown.outcome === 'unavailable') throw new HttpError(409, 'This is a service error, not an answer. Retry your question.');
     if (!ctx.provider?.voice) throw new HttpError(503, 'Spoken replies are not available right now.');
-    try {
-      const { audio, mime } = await ctx.provider.speak(shown.content.slice(0, 4000));
-      return { audio: audio.toString('base64'), mime };
-    } catch {
-      throw new HttpError(502, 'The spoken reply could not be created. The text answer is still available.');
-    }
+    const result = await synthesise(ctx, shown.content);
+    if (result.speech_error) throw new HttpError(502, result.speech_error);
+    return result.speech;
   },
 
   async upload_create(ctx, input) {
@@ -380,7 +467,7 @@ const ACTIONS = {
   },
 };
 
-export function createHandler({ getDatabase = database, getProvider = () => createProvider(), getScanner = () => createScanner() } = {}) {
+export function createHandler({ getDatabase = database, getProvider = () => createProvider(), getScanner = () => createScanner(), getSetup = () => providerSetup() } = {}) {
   return async function handler(req, res) {
     res.setHeader('Cache-Control', 'no-store');
     try {
@@ -388,7 +475,7 @@ export function createHandler({ getDatabase = database, getProvider = () => crea
       const db = getDatabase();
       const { user, profile } = await authenticate(req, db);
       const token = claims(req);
-      const ctx = { db, user, profile, admin: profile.role === 'admin', iat: Number(token.iat) || 0, aal: token.aal, provider: getProvider(), scanner: getScanner() };
+      const ctx = { db, user, profile, admin: profile.role === 'admin', iat: Number(token.iat) || 0, aal: token.aal, provider: getProvider(), scanner: getScanner(), setup: getSetup() };
       const input = req.body && typeof req.body === 'object' ? req.body : {};
       const action = Object.hasOwn(ACTIONS, input.action) ? ACTIONS[input.action] : null;
       if (!action) throw new HttpError(400, 'Unknown action.');

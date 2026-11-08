@@ -2,7 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { totp } from '../helpers/totp.mjs';
 
-type Seed = { tag: string; password: string; staff: { email: string }; alice: { email: string; company: string }; bob: { email: string; company: string }; vera: { email: string } };
+type Seed = { tag: string; password: string; tess: { email: string }; staff: { email: string }; alice: { email: string; company: string }; bob: { email: string; company: string }; vera: { email: string } };
 const seed = (): Seed => JSON.parse(readFileSync('artifacts/vexbot-seed.json', 'utf8'));
 const shot = (page: Page, name: string) => page.screenshot({ path: `artifacts/screenshots/${name}.png` });
 
@@ -27,10 +27,10 @@ async function resting(page: Page) {
 async function record(page: Page) {
   await page.evaluate(() => {
     const w = window as unknown as { __seen: Record<string, string[]> };
-    w.__seen = { flight: [], base: [], place: [] };
+    w.__seen = { flight: [], base: [], place: [], talk: [] };
     const tick = () => {
       const d = (document.querySelector('[data-testid=vexbot]') as HTMLElement | null)?.dataset;
-      if (d) for (const key of ['flight', 'base', 'place']) if (d[key] && !w.__seen[key].includes(d[key]!)) w.__seen[key].push(d[key]!);
+      if (d) for (const key of ['flight', 'base', 'place', 'talk']) if (d[key] && !w.__seen[key].includes(d[key]!)) w.__seen[key].push(d[key]!);
       requestAnimationFrame(tick);
     };
     tick();
@@ -161,7 +161,7 @@ test.describe('desktop Chrome', () => {
   });
 
   test('client: grounded answers with citations, honest no-answer, attachments, voice and history', async ({ page, context }) => {
-    await context.grantPermissions(['microphone'], { origin: 'http://localhost:5173' });
+    await context.grantPermissions(['microphone']);
     const errors = await login(page, seed().alice.email);
     await page.getByTestId('vexbot-launcher').click();
     await expect(page.getByTestId('vexbot-workspace')).toHaveValue(/.+/);
@@ -187,22 +187,23 @@ test.describe('desktop Chrome', () => {
     await expect(page.getByTestId('vexbot-assistant').last()).toContainText('“brief.txt” passed the malware check and is waiting for the Vexora team to review it');
     await shot(page, 'desktop-10-client-attachment-status');
 
-    // Turn-based voice with Chrome's fake microphone; the local mock transcriber returns a fixed question.
+    // Turn-based voice with Chrome's fake microphone; the local mock transcriber returns a fixed question,
+    // "Summarize pike point.pdf". That file is in the Test workspace, so Acme's Vexbot cannot see it.
     await page.getByTestId('vexbot-mic').click();
     await expect(page.getByTestId('vexbot-status')).toContainText('Listening');
     await expect(page.locator('[data-testid=vexbot]')).toHaveAttribute('data-status', 'recording');
     await page.waitForTimeout(1500);
     await page.getByTestId('vexbot-mic').click();
-    await expect(page.getByTestId('vexbot-user').last()).toContainText('What are your support hours?');
-    await expect(page.getByTestId('vexbot-assistant').last()).toContainText('9am to 5pm');
-    await expect(page.getByTestId('vexbot-assistant').last()).toContainText('Vexora business profile');
+    await expect(page.getByTestId('vexbot-user').last()).toContainText('Summarize pike point.pdf');
+    await expect(page.getByTestId('vexbot-assistant').last()).toContainText("couldn't find a file called “pike point.pdf” in this workspace");
+    await expect(page.getByTestId('vexbot-assistant').last()).not.toContainText('coastal walkway');
     await shot(page, 'desktop-11-client-voice-turn');
 
     await page.getByTestId('vexbot-new').click();
     await expect(page.getByTestId('vexbot-log')).toContainText('Answers come only from');
     await page.getByTestId('vexbot-history').click();
     await page.getByTestId('vexbot-history-list').getByRole('button').first().click();
-    await expect(page.getByTestId('vexbot-log')).toContainText('9am to 5pm');
+    await expect(page.getByTestId('vexbot-log')).toContainText('pike point.pdf');
     await shot(page, 'desktop-12-client-history');
     expect(errors).toEqual([]);
   });

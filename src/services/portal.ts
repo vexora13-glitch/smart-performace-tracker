@@ -58,10 +58,11 @@ export async function loadPortal(): Promise<PortalData> {
     members,
   };
 }
-export async function api(path: string, body: object, method = 'POST') {
+export async function api(path: string, body: object, method = 'POST', signal?: AbortSignal) {
   const session = unwrap(await db().auth.getSession()).session;
   if (!session) throw new Error('Sign in to continue.');
   const response = await fetch(`/api/${path}`, {
+    signal,
     method,
     headers: {
       'Content-Type': 'application/json',

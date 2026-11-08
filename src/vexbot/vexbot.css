@@ -68,6 +68,18 @@
 .vexbot[data-dock='bar'][data-robot='collapsed'] .vexbot-dock {
   padding-left: 16px;
 }
+.vexbot[data-dock='bar'] .vexbot-dock {
+  gap: 8px;
+  padding-right: 10px;
+}
+.vexbot[data-dock='bar'] .vexbot-launcher {
+  padding: 0 13px;
+}
+@media (max-width: 380px) {
+  .vexbot[data-dock='bar'] .vexbot-launcher svg {
+    display: none;
+  }
+}
 .vexbot-dock-status {
   flex: 1 1 auto;
   min-width: 0;
@@ -80,6 +92,171 @@
   border-radius: 999px;
   padding: 0 18px;
   box-shadow: 0 6px 18px #6d54ad2e;
+}
+/* Two controls beside the robot: Talk (voice, panel stays closed) and Ask (text chat). */
+.vexbot[data-dock='perch'] .vexbot-dock {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+.vexbot-launcher.secondary-launcher {
+  border-color: var(--vexbot-accent);
+  background: #fff;
+  color: var(--vexbot-accent);
+  box-shadow: none;
+}
+.vexbot-launcher.secondary-launcher:hover {
+  background: var(--vexbot-soft);
+}
+.vexbot-talk.active {
+  background: #2f2a3f;
+}
+.vexbot-talk.active:hover {
+  background: #1f1b2b;
+}
+
+/* Voice mode's speech bubble, beside the robot: what it is doing, what it heard, its answer, controls. */
+.vexbot-talk-bubble {
+  position: absolute;
+  width: min(340px, calc(100vw - 260px));
+  max-height: min(60vh, 460px);
+  overflow-y: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--vexbot-border);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 12px 32px #2523331f;
+  pointer-events: auto;
+  z-index: 4;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.vexbot[data-dock='perch'] .vexbot-talk-bubble::before {
+  content: '';
+  position: absolute;
+  left: -7px;
+  top: 34px;
+  width: 12px;
+  height: 12px;
+  border-left: 1px solid var(--vexbot-border);
+  border-bottom: 1px solid var(--vexbot-border);
+  background: #fff;
+  transform: rotate(45deg);
+}
+.vexbot[data-dock='bar'] .vexbot-talk-bubble {
+  left: 8px;
+  right: 8px;
+  width: auto;
+  bottom: calc(72px + 8px + var(--vexbot-keyboard, 0px));
+  max-height: 45vh;
+}
+.vexbot-talk-bubble p {
+  margin: 0 0 8px;
+}
+.vexbot-talk-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--vexbot-accent);
+}
+.vexbot-talk-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--vexbot-accent);
+}
+.vexbot-talk-bubble[data-talk='listening'] .vexbot-talk-dot,
+.vexbot-talk-bubble[data-talk='hearing'] .vexbot-talk-dot {
+  background: #d4475a;
+  animation: vexbot-pulse 1.1s ease-in-out infinite;
+}
+.vexbot-talk-bubble[data-talk='hearing'] .vexbot-talk-dot {
+  animation-duration: 0.45s;
+}
+.vexbot-talk-bubble[data-talk='thinking'] .vexbot-talk-dot,
+.vexbot-talk-bubble[data-talk='transcribing'] .vexbot-talk-dot {
+  animation: vexbot-pulse 0.8s ease-in-out infinite alternate;
+}
+@keyframes vexbot-pulse {
+  50% { transform: scale(0.55); opacity: 0.55; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vexbot-talk-dot {
+    animation: none !important;
+  }
+}
+.vexbot-talk-heard {
+  color: #6b6380;
+  font-style: italic;
+}
+.vexbot-talk-reply p {
+  white-space: pre-wrap;
+}
+.vexbot-talk-notice {
+  color: #9b2c3d;
+}
+.vexbot-talk-link {
+  min-height: 28px;
+  margin: 0 0 8px;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--vexbot-accent);
+  font-size: 12px;
+  text-align: left;
+  justify-content: flex-start;
+}
+.vexbot-talk-link:hover {
+  background: transparent;
+  text-decoration: underline;
+}
+.vexbot-talk-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.vexbot-talk-control {
+  min-height: 34px;
+  padding: 4px 12px;
+  border: 1px solid var(--vexbot-border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--vexbot-text);
+  font-size: 12px;
+}
+.vexbot-talk-control:hover {
+  background: var(--vexbot-soft);
+}
+.vexbot-talk-control[aria-pressed='true'] {
+  border-color: #d4475a;
+  color: #9b2c3d;
+}
+.vexbot-talk-control.end {
+  border-color: #2f2a3f;
+  background: #2f2a3f;
+  color: #fff;
+}
+.vexbot-talk-control.end:hover {
+  background: #1f1b2b;
+}
+.vexbot-sources summary small {
+  color: var(--vexbot-muted);
+  font-weight: 400;
+}
+.vexbot-source-open {
+  min-height: 28px;
+  margin: 2px 0 4px;
+  padding: 2px 10px;
+  border: 1px solid var(--vexbot-border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--vexbot-accent);
+  font-size: 12px;
+}
+.vexbot-source-open:hover {
+  background: var(--vexbot-soft);
 }
 .vexbot :focus-visible {
   outline: 2px solid var(--vexbot-accent);

@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { UPLOAD_ACCEPT, UPLOAD_HINT, UPLOAD_STATUS, uploadPrivate, type UploadState } from '../vexbot/uploads';
+import { ASK_EVENT } from '../vexbot/Vexbot';
 import {
   ArrowLeft,
   ArrowUpRight,
   Download,
   FileText,
   FolderOpen,
+  MessageCircle,
   MessageSquare,
   Play,
   Plus,
@@ -25,6 +27,16 @@ import {
   uploadFile,
 } from '../services/portal';
 import type { Client, PortalData, PortalFile, Profile } from '../types/portal';
+
+// Shared files Vexbot can read the text of (the same types server/vexbot/files.mjs extracts).
+const READABLE = new Set([
+  'application/pdf',
+  'text/plain',
+  'text/markdown',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+]);
 
 export function Workspace({
   client,
@@ -273,6 +285,23 @@ export function Workspace({
                       onClick={() => openFile(file)}
                     >
                       <Play size={17} />
+                    </button>
+                  )}
+                  {READABLE.has(file.mime_type) && (
+                    <button
+                      className="icon-button"
+                      aria-label={`Ask Vexbot about ${file.name}`}
+                      title="Ask Vexbot about this file"
+                      data-testid="workspace-ask-vexbot"
+                      onClick={() =>
+                        window.dispatchEvent(
+                          new CustomEvent(ASK_EVENT, {
+                            detail: { workspace: client.id, question: `Summarize “${file.name}”` },
+                          }),
+                        )
+                      }
+                    >
+                      <MessageCircle size={17} />
                     </button>
                   )}
                   <button

@@ -2,19 +2,31 @@ import { createServer, loadEnv } from 'vite';
 import clients from '../api/clients.mjs';
 import notifications from '../api/notifications.mjs';
 import vexbot from '../api/vexbot.mjs';
+import gmail from '../api/gmail/[action].mjs';
 
 // Vexbot accepts a one-minute voice turn as base64 JSON; everything else keeps the small limit.
 const BODY_LIMITS = { '/api/vexbot': 1_600_000 };
 
 // Keep server-only variables in the Node process. Vite exposes only VITE_* variables.
-Object.assign(process.env, loadEnv('development', process.cwd(), ''));
+const mode = process.env.PORTAL_DEV_MODE || 'development';
+Object.assign(process.env, loadEnv(mode, process.cwd(), ''));
+if (mode === 'localtest') {
+  for (const name of ['VITE_SUPABASE_URL', 'SUPABASE_URL']) {
+    if (!['localhost', '127.0.0.1'].includes(new URL(process.env[name]).hostname))
+      throw new Error(`Local testing requires a loopback database: ${name}.`);
+  }
+}
 const server = await createServer({
+  mode,
   plugins: [
     {
       name: 'portal-api',
       configureServer(vite) {
         vite.middlewares.use(async (req, res, next) => {
           const pathname = req.url?.split('?')[0];
+          const gmailAction = /^\/api\/gmail\/(connect|callback|status|disconnect)$/.exec(
+            pathname || '',
+          )?.[1];
           const handler =
             pathname === '/api/clients'
               ? clients
@@ -22,7 +34,9 @@ const server = await createServer({
                 ? notifications
                 : pathname === '/api/vexbot'
                   ? vexbot
-                  : null;
+                  : gmailAction
+                    ? gmail
+                    : null;
           if (!handler) return next();
           res.status = (code) => {
             res.statusCode = code;
@@ -43,6 +57,11 @@ const server = await createServer({
               }
             }
             req.body = body ? JSON.parse(body) : {};
+            if (gmailAction)
+              req.query = {
+                ...Object.fromEntries(new URL(req.url, 'http://localhost').searchParams),
+                action: gmailAction,
+              };
             await handler(req, res);
           } catch {
             res.status(400).json({ error: 'Invalid request body.' });
