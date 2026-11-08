@@ -1,6 +1,6 @@
 # Vexbot in the Vexora Client Portal
 
-Local implementation on branch `vexbot` (worktree `D:/Projects/smart-performance-tracker-vexbot`, based on `portal` at `4f20580`). Nothing has been deployed, and no hosted database, Vercel setting or website resource has been changed.
+Maintained on branch `portal` in `D:/Projects/smart-performance-tracker` (the earlier `vexbot` worktree is merged and obsolete). The base Vexbot migration is applied to the hosted Portal project; `20261109090000_vexbot_workspace_files.sql` is the one pending migration (see `RELEASE.md`).
 
 ## What it is
 
@@ -36,15 +36,15 @@ Local implementation on branch `vexbot` (worktree `D:/Projects/smart-performance
 ```sh
 supabase start -x realtime,edge-runtime,logflare,vector,imgproxy,supavisor,studio,postgres-meta,mailpit
 supabase db reset            # local stack only; applies both migrations
-# .env.development.local: local API URL and keys from `supabase status -o env`, plus
+# .env.localtest.local (copy .env.localtest.example): local API URL and keys from `supabase status -o env`; optionally
 #   VEXBOT_PROVIDER=mock and VEXBOT_SCANNER=mock
 npm test                     # includes the local API suite when the URL is loopback
-npm run dev
-npx playwright test -c playwright.vexbot.config.ts   # seeds synthetic data, real Chrome
+npm run dev:localtest        # http://localhost:5186, refuses any non-loopback database
+npx playwright test -c playwright.vexbot.config.ts   # own localtest server on :5181 with mocks, synthetic data, real Chrome
 ```
 
 The local ports moved from 54321/54322 because Windows reserves 54312–54411 on this machine.
 
 ## Provider configuration (portal-owned)
 
-`OPENAI_API_KEY`, `VEXBOT_OPENAI_MODEL`, `VEXBOT_TRANSCRIBE_MODEL`, `VEXBOT_TTS_MODEL`, `VEXBOT_TTS_VOICE`, `VEXBOT_CLAMD_HOST`, `VEXBOT_CLAMD_PORT`. All are server-only. The mock provider and mock scanner are refused when `VERCEL_ENV=production`.
+`OPENAI_API_KEY`, `VEXBOT_OPENAI_MODEL`, `VEXBOT_TRANSCRIBE_MODEL`, `VEXBOT_TTS_MODEL`, `VEXBOT_TTS_VOICE`, `VEXBOT_CLAMD_HOST`, `VEXBOT_CLAMD_PORT`. All are server-only. The mock provider and mock scanner are refused on every Vercel deployment (`VERCEL`/`VERCEL_ENV` set), previews included.

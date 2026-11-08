@@ -3,9 +3,12 @@ import { createClient } from '@supabase/supabase-js';
 
 // Invoked by the masked PowerShell prompt. Never accept a password in argv or log it.
 try {
-  const env = loadEnv('development', process.cwd(), '');
-  if (env.VITE_SUPABASE_URL !== 'http://127.0.0.1:56421')
-    throw new Error('Refusing: expected this portal’s local Supabase on port 56421.');
+  // Reads .env.localtest.local (the :5186 localtest server's settings). Never the hosted Portal.
+  const env = loadEnv('localtest', process.cwd(), '');
+  for (const name of ['VITE_SUPABASE_URL', 'SUPABASE_URL']) {
+    if (env[name] && env[name] !== 'http://127.0.0.1:56421')
+      throw new Error(`Refusing: ${name} is not this portal’s local Supabase on port 56421.`);
+  }
   let input = '';
   for await (const chunk of process.stdin) input += chunk;
   const password = input.replace(/\r?\n$/, '');

@@ -36,3 +36,10 @@ artifacts
 
 # Supabase CLI local state
 supabase/.branches
+
+# Credentials and generated local data never belong in Git (the repository is public)
+docs/openai.txt
+*.dpapi.local
+.codex-*
+uploads/
+!.env.localtest.example

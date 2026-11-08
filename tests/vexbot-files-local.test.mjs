@@ -12,7 +12,7 @@ import { createProvider } from '../server/vexbot/provider.mjs';
 import { createScanner } from '../server/vexbot/scanner.mjs';
 import { pdf, PIKE_POINT } from './helpers/pdf.mjs';
 
-const env = { ...loadEnv('development', process.cwd(), ''), ...process.env };
+const env = { ...loadEnv(process.env.PORTAL_DEV_MODE || 'localtest', process.cwd(), ''), ...process.env };
 const url = env.VITE_SUPABASE_URL;
 const local = url && ['127.0.0.1', 'localhost'].includes(new URL(url).hostname);
 
@@ -128,8 +128,11 @@ test('Vexbot reads workspace files (local Supabase)', { skip: !local && 'Local S
     const notOn = reply(await run(offline, tessToken, { action: 'ask', workspace_id: tess.id, question: 'Summarize pike point.pdf' }));
     assert.equal(notOn.outcome, 'unavailable');
     assert.match(notOn.content, /answer service isn't switched on for this portal yet/);
-    const failing = handlerWith(() => ({ name: 'failing', voice: false, answer: async () => { throw Object.assign(new Error('Provider request failed (401)'), { status: 401 }); } }));
-    const failed = reply(await run(failing, tessToken, { action: 'ask', workspace_id: tess.id, question: 'Summarize pike point.pdf' }));
+    const failingWith = (status) => handlerWith(() => ({ name: 'failing', voice: false, answer: async () => { throw Object.assign(new Error(`Provider request failed (${status})`), { status }); } }));
+    const rejected = reply(await run(failingWith(401), tessToken, { action: 'ask', workspace_id: tess.id, question: 'Summarize pike point.pdf' }));
+    assert.equal(rejected.outcome, 'unavailable');
+    assert.match(rejected.content, /rejected the portal credentials/);
+    const failed = reply(await run(failingWith(502), tessToken, { action: 'ask', workspace_id: tess.id, question: 'Summarize pike point.pdf' }));
     assert.equal(failed.outcome, 'unavailable');
     assert.match(failed.content, /couldn't reach its answer service just now/);
   });

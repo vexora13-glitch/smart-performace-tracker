@@ -8,9 +8,13 @@ import gmail from '../api/gmail/[action].mjs';
 const BODY_LIMITS = { '/api/vexbot': 1_600_000 };
 
 // Keep server-only variables in the Node process. Vite exposes only VITE_* variables.
-const mode = process.env.PORTAL_DEV_MODE || 'development';
+// `npm run dev` uses .env.local (hosted Portal). `npm run dev:localtest` uses .env.localtest.local (local
+// Supabase on 127.0.0.1:56421) on port 5186 and refuses any non-loopback database.
+const mode = process.argv.includes('--localtest') ? 'localtest' : process.env.PORTAL_DEV_MODE || 'development';
+process.env.PORTAL_DEV_MODE = mode;
 Object.assign(process.env, loadEnv(mode, process.cwd(), ''));
 if (mode === 'localtest') {
+  process.env.PORTAL_DEV_PORT ||= '5186';
   for (const name of ['VITE_SUPABASE_URL', 'SUPABASE_URL']) {
     if (!['localhost', '127.0.0.1'].includes(new URL(process.env[name]).hostname))
       throw new Error(`Local testing requires a loopback database: ${name}.`);

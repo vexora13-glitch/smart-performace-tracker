@@ -6,7 +6,8 @@ import { resolve } from 'node:path';
 // VEXBOT_E2E_PORT runs the test server on its own port, so an ordinary `npm run dev` can keep running.
 // The fake microphone plays a speech-like recording (written by the seed): a pause, about 1.6 seconds of
 // "speech", then silence, on a loop, so hands-free voice mode can hear a question start and end.
-const port = Number(process.env.VEXBOT_E2E_PORT) || 5173;
+// Always its own localtest server (local Supabase only, labelled mocks), never a hosted-mode :5173 server.
+const port = Number(process.env.VEXBOT_E2E_PORT) || 5181;
 const chrome = {
   channel: 'chrome',
   launchOptions: {
@@ -31,9 +32,9 @@ export default defineConfig({
     { name: 'mobile-chrome', use: { ...devices['Pixel 7'], ...chrome } },
   ],
   webServer: {
-    command: 'npm run dev',
+    command: 'npm run dev:localtest',
     url: `http://localhost:${port}`,
-    reuseExistingServer: port === 5173,
-    env: port === 5173 ? {} : { PORTAL_DEV_PORT: String(port) },
+    reuseExistingServer: false,
+    env: { PORTAL_DEV_PORT: String(port), VEXBOT_PROVIDER: 'mock', VEXBOT_SCANNER: 'mock' },
   },
 });

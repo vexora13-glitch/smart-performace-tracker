@@ -1,6 +1,29 @@
 # Vexora Client Portal
 
-The optional, disabled Gmail integration foundation is documented in [docs/gmail-foundation.md](docs/gmail-foundation.md). Its proposed migration is **unapplied**; no live mailbox connection or dashboard is enabled. See [GMAIL_FOUNDATION_REPORT.md](GMAIL_FOUNDATION_REPORT.md) for the local implementation audit and validation results.
+## Canonical working copy
+
+| | |
+| --- | --- |
+| Folder | `D:\Projects\smart-performance-tracker` (the only maintained copy) |
+| Branch | `portal` → PR #1 into `main` on `vexora13-glitch/smart-performace-tracker` (**public** repository) |
+| Obsolete | `D:\Projects\smart-performance-tracker-vexbot` (worktree of branch `vexbot`, fully merged; marked `OBSOLETE.txt`) |
+
+One codebase, two configurations:
+
+| Command | Settings file | Database | URL |
+| --- | --- | --- | --- |
+| `npm run dev` | `.env.local` | hosted Portal (`ccxkaqbajugimmtsztif`) | http://localhost:5173 |
+| `npm run dev:localtest` | `.env.localtest.local` (see `.env.localtest.example`) | local Supabase `127.0.0.1:56421` only; refuses anything else | http://localhost:5186 |
+| Vercel | Vercel environment variables | hosted Portal | deployment URL |
+
+Local accounts (localtest only; masked prompt, never touches the hosted project):
+`.\scripts\set-local-admin-password.ps1` (creates/updates the local `info@vexoradigital.com` admin) and
+`.\scripts\set-local-test-password.ps1` (the local synthetic **Test** client). Local ClamAV: the
+`vexora-localtest-clamav` Docker container on `127.0.0.1:3310`. Release steps: [RELEASE.md](RELEASE.md).
+
+Status (9 Nov 2026): the Gmail foundation migration **is applied on the hosted Portal project** (tables exist; one `vexora` organisation row); the integration stays disabled (`GMAIL_INTEGRATION_ENABLED=false`).
+
+The optional, disabled Gmail integration foundation is documented in [docs/gmail-foundation.md](docs/gmail-foundation.md). No live mailbox connection or dashboard is enabled. See [GMAIL_FOUNDATION_REPORT.md](GMAIL_FOUNDATION_REPORT.md) for the local implementation audit and validation results.
 
 Phase 1 administrator and client application. React 19, TypeScript, Vite, Supabase Auth/Postgres/private Storage and Vercel Node functions. The existing repository and Vercel project are retained. The old Smart Performance UI, workflows, AI integration, tests and migrations have been replaced.
 

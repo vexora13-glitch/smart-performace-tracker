@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/dev.mjs",
+    "dev:localtest": "node scripts/dev.mjs --localtest",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "test": "node --test tests/*.test.mjs",

@@ -96,15 +96,18 @@ function mockProvider(env) {
   };
 }
 
+// Mocks are for local stacks only: every Vercel deployment (preview included) uses the hosted database.
+export const onVercel = (env) => Boolean(env.VERCEL || env.VERCEL_ENV);
+
 /** What answers and voice still need, by variable name only (never values). Shown to staff, not clients. */
 export function providerSetup(env = process.env) {
-  if (env.VEXBOT_PROVIDER === 'mock' && env.VERCEL_ENV !== 'production') return { mode: 'mock', missing: [] };
+  if (env.VEXBOT_PROVIDER === 'mock' && !onVercel(env)) return { mode: 'mock', missing: [] };
   const missing = ['OPENAI_API_KEY', 'VEXBOT_OPENAI_MODEL', 'VEXBOT_TRANSCRIBE_MODEL', 'VEXBOT_TTS_MODEL'].filter((name) => !env[name]);
   return { mode: 'openai', missing };
 }
 
 export function createProvider(env = process.env) {
   if (env.OPENAI_API_KEY && env.VEXBOT_OPENAI_MODEL && env.VEXBOT_PROVIDER !== 'mock') return openaiProvider(env);
-  if (env.VEXBOT_PROVIDER === 'mock' && env.VERCEL_ENV !== 'production') return mockProvider(env);
+  if (env.VEXBOT_PROVIDER === 'mock' && !onVercel(env)) return mockProvider(env);
   return null;
 }

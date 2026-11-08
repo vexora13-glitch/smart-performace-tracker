@@ -91,6 +91,8 @@ test('an answer counts only when it cites sources that were provided', () => {
 test('scanning fails closed: no scanner means quarantine, the mock is refused in production', async () => {
   assert.equal(createScanner({}), null);
   assert.equal(createScanner({ VEXBOT_SCANNER: 'mock', VERCEL_ENV: 'production' }), null);
+  assert.equal(createScanner({ VEXBOT_SCANNER: 'mock', VERCEL_ENV: 'preview' }), null, 'previews use the hosted database');
+  assert.equal(createScanner({ VEXBOT_SCANNER: 'mock', VERCEL: '1' }), null);
   const mock = createScanner({ VEXBOT_SCANNER: 'mock' });
   assert.deepEqual(await mock.scan(Buffer.from('hello')), { clean: true });
   assert.equal((await mock.scan(Buffer.from(`x${EICAR}x`))).clean, false);
@@ -114,6 +116,8 @@ test('clamd protocol: OK is clean, FOUND is blocked with its signature', async (
 test('providers: OpenAI needs a portal key and model; the mock never runs in production', async () => {
   assert.equal(createProvider({}), null);
   assert.equal(createProvider({ VEXBOT_PROVIDER: 'mock', VERCEL_ENV: 'production' }), null);
+  assert.equal(createProvider({ VEXBOT_PROVIDER: 'mock', VERCEL_ENV: 'preview' }), null, 'previews use the hosted database');
+  assert.equal(createProvider({ VEXBOT_PROVIDER: 'mock', VERCEL: '1' }), null);
   assert.equal(createProvider({ OPENAI_API_KEY: 'k' }), null, 'a key alone is not enough');
   assert.equal(createProvider({ OPENAI_API_KEY: 'k', VEXBOT_OPENAI_MODEL: 'm' }).name, 'openai');
   assert.equal(createProvider({ OPENAI_API_KEY: 'k', VEXBOT_OPENAI_MODEL: 'm' }).voice, false, 'voice needs speech models too');

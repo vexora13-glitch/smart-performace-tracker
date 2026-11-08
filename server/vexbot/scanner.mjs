@@ -32,7 +32,7 @@ function clamd(host, port, bytes, timeoutMs = 30000) {
 
 /**
  * Returns a scanner, or null when none is configured. The mock flags the EICAR test string and is refused
- * on Vercel production so it can never stand in for real scanning there.
+ * on every Vercel deployment (preview included) so it can never stand in for real scanning there.
  */
 export function createScanner(env = process.env) {
   const kind = env.VEXBOT_SCANNER || (env.VEXBOT_CLAMD_HOST ? 'clamd' : '');
@@ -40,7 +40,7 @@ export function createScanner(env = process.env) {
     const port = Number(env.VEXBOT_CLAMD_PORT || 3310);
     return { name: 'clamd', scan: (bytes) => clamd(env.VEXBOT_CLAMD_HOST, port, bytes) };
   }
-  if (kind === 'mock' && env.VERCEL_ENV !== 'production') {
+  if (kind === 'mock' && !env.VERCEL && !env.VERCEL_ENV) {
     return { name: 'mock', scan: async (bytes) => (bytes.includes(Buffer.from(EICAR)) ? { clean: false, signature: 'Eicar-Test-Signature (mock)' } : { clean: true }) };
   }
   return null;

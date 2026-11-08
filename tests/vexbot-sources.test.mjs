@@ -14,6 +14,11 @@ test('a question names a file by its full name or a distinctive base name, howev
   assert.equal(mentions('Summarize plan.pdf', 'plan.pdf'), true);
   assert.equal(mentions('Summarize the part one notes', 'part-one.txt'), true);
   assert.equal(mentions('Summarize the onboarding guide', 'Synthetic: Onboarding guide'), true, 'a title without its label');
+  // Real gpt-4o-mini-transcribe output for a spoken “Summarize pike point.pdf”.
+  for (const heard of ['Summarize Pikepoint.pdf.', 'Summarize PikePoint.pdf.', 'Summarize pike point.pdf.', 'Summarise the pikepoint document'])
+    assert.equal(mentions(heard, 'pike point.pdf'), true, heard);
+  assert.equal(mentions('Summarize the spike pointer notes', 'pike point.pdf'), false, 'joined only across whole words');
+  assert.equal(mentions('Summarize planner', 'plan ner.txt'), false, 'short joined names are not matched');
 });
 
 test('the requested file name is recovered for an honest "not found"', () => {
@@ -21,6 +26,7 @@ test('the requested file name is recovered for an honest "not found"', () => {
   assert.equal(requestedName('Summarize pike point.pdf'), 'pike point.pdf');
   assert.equal(requestedName('What does the Q3 report.pdf say?'), 'Q3 report.pdf');
   assert.equal(requestedName('What are your hours?'), null);
+  assert.equal(requestedName('Summarize Pikepoint.pdf.'), 'Pikepoint.pdf', 'transcription adds a full stop');
   assert.equal(refersToFile('Summarize the document here'), true);
   assert.equal(refersToFile('Can you read my brief?'), true);
   assert.equal(refersToFile('When is the workshop?'), false);

@@ -27,7 +27,7 @@ function speechLike() {
 }
 
 export default async function seed() {
-  const env = { ...loadEnv('development', process.cwd(), ''), ...process.env };
+  const env = { ...loadEnv(process.env.PORTAL_DEV_MODE || 'localtest', process.cwd(), ''), ...process.env };
   const url = env.VITE_SUPABASE_URL;
   if (!url || !['127.0.0.1', 'localhost'].includes(new URL(url).hostname)) throw new Error('Refusing to seed: VITE_SUPABASE_URL is not a local Supabase stack.');
   const db = createClient(url, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });

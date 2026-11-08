@@ -14,7 +14,7 @@ import { createProvider } from '../server/vexbot/provider.mjs';
 import { docx } from './helpers/office.mjs';
 import { totp } from './helpers/totp.mjs';
 
-const env = { ...loadEnv('development', process.cwd(), ''), ...process.env };
+const env = { ...loadEnv(process.env.PORTAL_DEV_MODE || 'localtest', process.cwd(), ''), ...process.env };
 const url = env.VITE_SUPABASE_URL;
 const local = url && ['127.0.0.1', 'localhost'].includes(new URL(url).hostname);
 const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';

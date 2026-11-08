@@ -200,7 +200,7 @@ async function synthesise(ctx, text) {
     return { speech_error: error?.status === 401 || error?.status === 403
       ? 'The speech service rejected the portal credentials. Ask the administrator to check the server API key and permissions, then retry Talk.'
       : error?.status === 429 ? 'The speech service is rate limited or out of quota. Try Talk again later.'
-      : error?.status === 404 ? 'The configured speech model is unavailable. Ask the administrator to check the speech model setting.'
+      : error?.status === 400 || error?.status === 404 ? 'The configured speech model or voice is unavailable. Ask the administrator to check the speech model and voice settings.'
       : error?.name === 'TimeoutError' ? 'The speech service timed out. Retry Talk.'
       : 'The spoken reply could not be created. Retry Talk or use Ask for text.' };
   }

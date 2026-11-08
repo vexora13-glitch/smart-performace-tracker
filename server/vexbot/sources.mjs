@@ -40,7 +40,16 @@ export function mentions(question, name) {
   if (full && asked.includes(` ${full} `)) return true;
   const titled = normalise(name.replace(/^[^:]{1,40}:\s*/, '')).trim();
   if (titled !== full && titled.length >= 6 && asked.includes(` ${titled} `)) return true;
-  return Boolean(base) && (base.includes(' ') || base.length >= 6) && asked.includes(` ${base} `);
+  if (Boolean(base) && (base.includes(' ') || base.length >= 6) && asked.includes(` ${base} `)) return true;
+  // Speech-to-text often joins or splits words ("Pikepoint.pdf" for “pike point.pdf”). Compare without spaces,
+  // but only across whole words of the question and only for distinctive names.
+  const words = asked.trim().split(' ');
+  const joined = (target) => target.length >= 8 && words.some((_, from) => {
+    let run = '';
+    for (let at = from; at < words.length && run.length < target.length; at++) run += words[at];
+    return run === target;
+  });
+  return joined(full.replaceAll(' ', '')) || ((base.includes(' ') || base.length >= 6) && joined(base.replaceAll(' ', '')));
 }
 
 const DEICTIC = /\b(?:this|that|the|my|our|attached|shared|uploaded)\s+(?:file|document|doc|pdf|attachment|deck|slides?|spreadsheet|presentation|report|brief|upload)s?\b|\b(?:file|document|doc|pdf|attachment)s?\s+(?:here|above|attached)\b|\b(?:summari[sz]e|analy[sz]e|review|explain|read)\s+(?:it|this|that)\b/i;
@@ -53,7 +62,8 @@ const LEAD_WORDS = new Set(['summarise', 'summarize', 'analyse', 'analyze', 'rev
 export function requestedName(question) {
   const quoted = question.match(/[`“"‘']([^`”"’']{1,160}\.[a-z0-9]{2,8})[`”"’']/i);
   if (quoted) return quoted[1].trim();
-  const words = question.split(/\s+/).map((word) => word.replace(/^[([]+|[)\]?!,;:]+$/g, ''));
+  // Trailing sentence punctuation, including the full stop transcription adds ("Summarize report.pdf.").
+  const words = question.split(/\s+/).map((word) => word.replace(/^[([]+|[)\]?!,;:.]+$/g, ''));
   const at = words.findIndex((word) => EXTENSION.test(word));
   if (at < 0) return null;
   let from = at;

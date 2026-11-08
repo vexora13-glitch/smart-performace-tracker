@@ -6,3 +6,8 @@ playwright-report
 supabase/.temp
 .agents
 .codex-*
+docs/openai.txt
+*.dpapi.local
+uploads
+tests
+scripts/set-local-*
