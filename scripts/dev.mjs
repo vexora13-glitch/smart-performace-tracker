@@ -1,6 +1,10 @@
 import { createServer, loadEnv } from 'vite';
 import clients from '../api/clients.mjs';
 import notifications from '../api/notifications.mjs';
+import vexbot from '../api/vexbot.mjs';
+
+// Vexbot accepts a one-minute voice turn as base64 JSON; everything else keeps the small limit.
+const BODY_LIMITS = { '/api/vexbot': 1_600_000 };
 
 // Keep server-only variables in the Node process. Vite exposes only VITE_* variables.
 Object.assign(process.env, loadEnv('development', process.cwd(), ''));
@@ -16,7 +20,9 @@ const server = await createServer({
               ? clients
               : pathname === '/api/notifications'
                 ? notifications
-                : null;
+                : pathname === '/api/vexbot'
+                  ? vexbot
+                  : null;
           if (!handler) return next();
           res.status = (code) => {
             res.statusCode = code;
@@ -31,7 +37,7 @@ const server = await createServer({
             let body = '';
             for await (const chunk of req) {
               body += chunk;
-              if (Buffer.byteLength(body) > 16384) {
+              if (Buffer.byteLength(body) > (BODY_LIMITS[pathname] ?? 16384)) {
                 res.status(413).json({ error: 'Request is too large.' });
                 return;
               }

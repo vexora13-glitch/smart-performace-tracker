@@ -8,11 +8,14 @@ export function Chat({
   data,
   refresh,
   workspaceId,
+  readOnly = false,
 }: {
   profile: Profile;
   data: PortalData;
   refresh: () => Promise<void>;
   workspaceId?: string;
+  /** Read-only workspace members can read conversations but not start or reply to them. */
+  readOnly?: boolean;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [archived, setArchived] = useState(false);
@@ -159,7 +162,8 @@ export function Chat({
             <button
               className="icon-button"
               aria-label="New conversation"
-              disabled={data.clients.length === 0}
+              hidden={readOnly}
+              disabled={data.clients.length === 0 || readOnly}
               onClick={() => {
                 setComposing(true);
                 setSelected(null);
@@ -315,6 +319,10 @@ export function Chat({
                   <Archive size={16} />
                   This conversation is archived. Its history is available to read.
                 </div>
+              ) : readOnly ? (
+                <div className="archived-note" data-testid="read-only-note">
+                  You have read-only access to this workspace, so you can read but not reply.
+                </div>
               ) : (
                 <form className="message-composer" onSubmit={send}>
                   <label className="sr-only" htmlFor="reply">
@@ -342,11 +350,17 @@ export function Chat({
                 <MessageSquare size={30} />
               </span>
               <h2>A conversation away.</h2>
-              <p>Choose a conversation or start something new.</p>
-              <button disabled={data.clients.length === 0} onClick={() => setComposing(true)}>
-                <Plus size={16} />
-                New conversation
-              </button>
+              <p>
+                {readOnly
+                  ? 'Choose a conversation to read. Your access is read-only.'
+                  : 'Choose a conversation or start something new.'}
+              </p>
+              {!readOnly && (
+                <button disabled={data.clients.length === 0} onClick={() => setComposing(true)}>
+                  <Plus size={16} />
+                  New conversation
+                </button>
+              )}
             </div>
           )}
         </div>

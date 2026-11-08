@@ -2,14 +2,15 @@ project_id = "vexora-client-portal"
 
 [api]
 enabled = true
-port = 54321
+port = 56421
 schemas = ["public", "graphql_public"]
 extra_search_path = ["public", "extensions"]
 max_rows = 1000
 
 [db]
-port = 54322
+port = 56422
 major_version = 17
+shadow_port = 56420
 
 [auth]
 enabled = true
@@ -27,3 +28,11 @@ enable_confirmations = true
 [storage]
 enabled = true
 file_size_limit = "50MiB"
+
+# Staff MFA: Vexbot knowledge and settings changes require an AAL2 (TOTP) session.
+[auth.mfa]
+max_enrolled_factors = 10
+
+[auth.mfa.totp]
+enroll_enabled = true
+verify_enabled = true

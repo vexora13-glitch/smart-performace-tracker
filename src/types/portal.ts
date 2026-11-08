@@ -45,6 +45,12 @@ export interface PortalFile {
   size_bytes: number;
   created_at: string;
 }
+export interface WorkspaceMember {
+  workspace_id: string;
+  user_id: string;
+  access: 'read_only' | 'full';
+  created_at: string;
+}
 export interface PortalData {
   profiles: Profile[];
   clients: Client[];
@@ -53,6 +59,7 @@ export interface PortalData {
   reads: ReadReceipt[];
   announcements: Announcement[];
   files: PortalFile[];
+  members: WorkspaceMember[];
 }
 export const emptyData: PortalData = {
   profiles: [],
@@ -62,4 +69,5 @@ export const emptyData: PortalData = {
   reads: [],
   announcements: [],
   files: [],
+  members: [],
 };

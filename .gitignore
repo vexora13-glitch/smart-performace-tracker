@@ -33,3 +33,6 @@ playwright-report
 artifacts
 
 .vercel
+
+# Supabase CLI local state
+supabase/.branches
