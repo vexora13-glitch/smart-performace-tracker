@@ -20,7 +20,8 @@
     "pdfjs-dist": "6.4.299",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
-    "three": "0.187.0"
+    "three": "0.187.0",
+    "ws": "8.22.2"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.15",

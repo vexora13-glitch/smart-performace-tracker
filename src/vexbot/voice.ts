@@ -1,6 +1,6 @@
-// Voice for Vexbot. Two ways in: the panel's turn-based mic (record, stop, send), and hands-free voice mode
-// from the robot (below). Neither is a live, full-duplex stream: each utterance is recorded, transcribed and
-// answered in turn. Audio is never stored by the portal.
+// Recorded-voice fallback: panel recording and utterance-based hands-free recording.
+// The native, interruptible WebRTC transport lives in realtime.ts. This fallback
+// transcribes and answers each recording separately; the portal does not store its audio.
 
 const MAX_SECONDS = 55;
 const TYPES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];

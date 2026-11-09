@@ -2,10 +2,11 @@ import { createServer, loadEnv } from 'vite';
 import clients from '../api/clients.mjs';
 import notifications from '../api/notifications.mjs';
 import vexbot from '../api/vexbot.mjs';
+import vexbotVoice from '../api/vexbot-voice.mjs';
 import gmail from '../api/gmail/[action].mjs';
 
 // Vexbot accepts a one-minute voice turn as base64 JSON; everything else keeps the small limit.
-const BODY_LIMITS = { '/api/vexbot': 1_600_000 };
+const BODY_LIMITS = { '/api/vexbot': 1_600_000, '/api/vexbot-voice': 70_000 };
 
 // Keep server-only variables in the Node process. Vite exposes only VITE_* variables.
 // `npm run dev` uses .env.local (hosted Portal). `npm run dev:localtest` uses .env.localtest.local (local
@@ -36,7 +37,7 @@ const server = await createServer({
               ? clients
               : pathname === '/api/notifications'
                 ? notifications
-                : pathname === '/api/vexbot'
+                : pathname === '/api/vexbot-voice' ? vexbotVoice : pathname === '/api/vexbot'
                   ? vexbot
                   : gmailAction
                     ? gmail

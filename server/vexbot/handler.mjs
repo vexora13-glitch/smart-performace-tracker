@@ -2,7 +2,7 @@
 // rechecked against the database on every call (including saved answers and spoken replies), and every
 // knowledge or settings change requires an administrator session verified with MFA (AAL2).
 import { selectHistory, retrievalQueries } from './context.mjs';
-import { realtimeReadiness } from './realtime.mjs';
+import { INTERRUPTED_VOICE_TEXT, realtimeReadiness } from './realtime.mjs';
 import { randomUUID } from 'node:crypto';
 import { authenticate, check, database, method, respondError } from '../runtime.mjs';
 import { HttpError, id as uuid, requiredText } from '../validation.mjs';
@@ -106,7 +106,7 @@ async function present(ctx, conversation, messages) {
       return { id: message.id, role: 'assistant', outcome: message.outcome, withdrawn: true, content: `This answer is no longer available because ${reason}. Ask again for a current answer.`, citations: [], uses_profile: false, created_at: message.created_at };
     }
     return {
-      id: message.id, role: 'assistant', outcome: message.outcome, withdrawn: false, content: message.content, uses_profile: message.uses_profile, created_at: message.created_at,
+      id: message.id, role: 'assistant', outcome: message.outcome, withdrawn: false, interrupted: message.content === INTERRUPTED_VOICE_TEXT, content: message.content === INTERRUPTED_VOICE_TEXT ? 'You interrupted this reply.' : message.content, uses_profile: message.uses_profile, created_at: message.created_at,
       citations: [
         ...own.map((c) => ({ kind: 'document', id: c.document_id, document_id: c.document_id, title: c.vexbot_documents.title, excerpt: c.excerpt })),
         ...files.map((c) => ({ kind: 'file', id: c.file_id, file_id: c.file_id, title: c.file_name, excerpt: c.excerpt })),
@@ -249,6 +249,10 @@ async function download(ctx, path) {
 const ACTIONS = {
   async status(ctx) {
     const value = { provider: ctx.provider?.name ?? null, voice: Boolean(ctx.provider?.voice), scanner: ctx.scanner?.name ?? null, realtime: realtimeReadiness() };
+    if (value.realtime.available) {
+      const probe = await ctx.db.from('vexbot_voice_sessions').select('id', { head: true }).limit(1);
+      if (probe.error) value.realtime = { ...value.realtime, available: false, reason: 'Live voice session controls need administrator setup. Use text or recorded voice.' };
+    }
     if (!ctx.admin) return value;
     // Staff see what is missing (variable names only) and whether the workspace-files migration is applied.
     const cache = await ctx.db.from('vexbot_file_text').select('file_id', { head: true, count: 'exact' });
@@ -494,5 +498,62 @@ export function createHandler({ getDatabase = database, getProvider = () => crea
     } catch (error) {
       return respondError(res, error);
     }
+  };
+}
+
+/** Private adapter for the Realtime supervisor. Never accepts client-supplied history,
+ * source ids or workspace from a model tool. It reuses the text path's visibility,
+ * file resolution, withdrawal, correction and citation rules. */
+export async function voiceContext(req, input, db = database()) {
+  let ctx;
+  const workspace = input.workspace_id == null ? null : uuid(input.workspace_id);
+  const refresh = async () => {
+    const { user, profile } = await authenticate(req, db);
+    const token = claims(req);
+    ctx = { db, user, profile, admin: profile.role === 'admin', iat: Number(token.iat) || 0, aal: token.aal };
+    await requireAccess(ctx, workspaceInput(ctx, workspace));
+  };
+  await refresh();
+  const conversation = input.conversation_id ? await conversationFor(ctx, input.conversation_id)
+    : check(await db.from('vexbot_conversations').insert({ user_id: ctx.user.id, workspace_id: workspace, title: 'Voice conversation' }).select('*').single());
+  if (conversation.workspace_id !== workspace) throw new HttpError(400, 'This conversation belongs to another workspace.');
+  const shown = async () => { await refresh(); return present(ctx, conversation, await messagesOf(ctx, conversation.id)); };
+  return {
+    user: ctx.user.id, workspace, conversation, refresh,
+    async evidence(sources) {
+      await refresh();
+      const visible = await inventory(db, workspace);
+      for (const source of sources) {
+        if (source.kind === 'document' && !visible.documents.some(d => d.id === source.document_id)) throw new HttpError(410, 'A referenced document was withdrawn. Ask again.');
+        if (source.kind === 'file' && !visible.files.some(f => f.id === source.file_id)) throw new HttpError(410, 'A referenced file is no longer available. Ask again.');
+      }
+    },
+    async history() { return selectHistory(await shown()); },
+    async snapshot() { return { conversation, messages: await shown() }; },
+    async lookup(question) {
+      const history = selectHistory(await shown());
+      const settings = await loadSettings(ctx);
+      const recent = (await shown()).filter(m => m.role === 'assistant' && !m.withdrawn).at(-1)?.citations ?? [];
+      const result = await plan(ctx, { workspace, question: requiredText(question, 'question', 2000), history, settings, attachments: [], recent: recent.map(c => ({ kind: c.kind, id: c.id })) });
+      await refresh();
+      return { ...result, history, fallback: noAnswerText(settings.business_profile ?? {}) };
+    },
+    async userMessage(content, at = new Date().toISOString()) {
+      await refresh();
+      check(await db.from('vexbot_messages').insert({ conversation_id: conversation.id, role: 'user', content: requiredText(content, 'transcript', 2000), created_at: at }));
+    },
+    async assistantMessage(content, sources = [], interrupted = false, at = new Date().toISOString()) {
+      await refresh();
+      // Check evidence again immediately before persisting/displaying a voice answer.
+      const row = check(await db.from('vexbot_messages').insert({ conversation_id: conversation.id, role: 'assistant', content: interrupted ? INTERRUPTED_VOICE_TEXT : content.slice(0, 20000), outcome: interrupted ? 'no_answer' : 'answered', uses_profile: !interrupted && sources.some(s => s.kind === 'profile'), created_at: at }).select('*').single());
+      if (!interrupted) {
+        const docs = [...new Map(sources.filter(s => s.kind === 'document').map(s => [s.document_id, s])).values()];
+        const files = [...new Map(sources.filter(s => s.kind === 'file').map(s => [s.file_id, s])).values()];
+        if (docs.length) check(await db.from('vexbot_citations').insert(docs.map(s => ({ message_id: row.id, document_id: s.document_id, excerpt: s.content.slice(0, 600) }))));
+        if (files.length) await optionalRows(db.from('vexbot_file_citations').insert(files.map(s => ({ message_id: row.id, file_id: s.file_id, file_name: s.title, excerpt: s.content.slice(0, 600) }))));
+      }
+      check(await db.from('vexbot_conversations').update({ updated_at: new Date().toISOString() }).eq('id', conversation.id));
+      return row.id;
+    },
   };
 }
