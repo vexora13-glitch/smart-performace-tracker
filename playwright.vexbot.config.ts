@@ -21,6 +21,7 @@ const chrome = {
 };
 export default defineConfig({
   testDir: './tests/vexbot-e2e',
+  outputDir: './artifacts/playwright/vexbot',
   fullyParallel: false,
   workers: 1,
   timeout: 120_000,

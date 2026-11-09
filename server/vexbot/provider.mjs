@@ -2,6 +2,7 @@
 // portal's own server-only key. The mock is deterministic, labelled, and refused on Vercel production; it
 // exists so the whole flow can be built and tested locally without a key.
 import { ANSWER_SCHEMA, systemPrompt, userPrompt } from './prompt.mjs';
+import { events, partialAnswer } from '../../src/vexbot/stream.mjs';
 
 const OPENAI = 'https://api.openai.com/v1';
 
@@ -9,7 +10,7 @@ async function openai(env, path, init) {
   const response = await fetch(`${OPENAI}${path}`, {
     ...init,
     headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, ...(init.headers || {}) },
-    signal: AbortSignal.timeout(45000),
+    signal: init.signal ? AbortSignal.any([init.signal, AbortSignal.timeout(45000)]) : AbortSignal.timeout(45000),
   });
   // Only the status is kept: it tells whether the key, the model name or a rate limit is at fault.
   if (!response.ok) throw Object.assign(new Error(`Provider request failed (${response.status})`), { status: response.status });
@@ -21,13 +22,15 @@ function openaiProvider(env) {
   return {
     name: 'openai',
     voice: Boolean(env.VEXBOT_TRANSCRIBE_MODEL && env.VEXBOT_TTS_MODEL),
-    async answer({ settings, question, sources, history }) {
+    async answer({ settings, question, sources, history, onDelta, signal }) {
       const response = await openai(env, '/chat/completions', {
         method: 'POST',
+        signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model,
           store: false,
+          stream: Boolean(onDelta),
           messages: [
             { role: 'system', content: systemPrompt(settings) },
             { role: 'user', content: userPrompt({ question, sources, history }) },
@@ -35,6 +38,22 @@ function openaiProvider(env) {
           response_format: { type: 'json_schema', json_schema: { name: 'vexbot_answer', strict: true, schema: ANSWER_SCHEMA } },
         }),
       });
+      if (onDelta) {
+        let json = '', shown = '', completed = false;
+        for await (const { data } of events(response.body)) {
+          if (data === '[DONE]') { completed = true; break; }
+          const event = JSON.parse(data);
+          if (event.error) throw new Error('Provider stream failed');
+          const choice = event.choices?.[0];
+          if (choice?.delta?.refusal || ['length', 'content_filter'].includes(choice?.finish_reason)) throw new Error('Provider did not complete the answer');
+          json += choice?.delta?.content ?? '';
+          if (json.length > 80_000) throw new Error('Provider answer exceeded its limit');
+          const text = partialAnswer(json, sources);
+          if (text.length > shown.length) { await onDelta(text.slice(shown.length)); shown = text; }
+        }
+        if (!completed) throw new Error('Provider stream was interrupted');
+        return JSON.parse(json);
+      }
       const data = await response.json();
       // An unreadable reply is a service failure, not a sign that the sources lack the answer.
       try { return JSON.parse(data.choices?.[0]?.message?.content ?? ''); } catch { throw new Error('Provider returned an unreadable answer'); }
@@ -74,7 +93,7 @@ function mockProvider(env) {
     // Extractive: quotes the best-ranked passage. Never invents content and declines with no sources.
     async answer({ question, sources }) {
       // A file the client asked about: summarise by quoting its opening, or the sentence that matches.
-      const file = sources.find((source) => source.whole);
+      const file = sources.find((source) => source.whole || source.label?.includes('selected passages'));
       if (file) {
         const sentences = file.content.replace(/\s+/g, ' ').split(/(?<=[.!?])\s+/).filter(Boolean);
         const generic = new Set(['what', 'does', 'this', 'that', 'there', 'document', 'file', 'about', 'tell', 'with', 'from', 'here']);

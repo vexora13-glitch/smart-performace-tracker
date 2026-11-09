@@ -46,6 +46,7 @@ export function systemPrompt(settings) {
     'List in "sources" the id of every source you used, and only those.',
     `Tone: ${TONES[settings.tone] ?? TONES.friendly}`,
     `Length: ${DETAIL[settings.detail] ?? DETAIL.standard}`,
+    'The client’s requested length overrides the default: quick summaries are brief, a two-minute explanation is about 250 words, details may be longer, and cost questions get a direct sourced answer. Comparisons should cover both sources. Sources marked as selected passages are not whole documents. Never present truncated text as a complete summary.',
     guidance ? `Guidance from Vexora staff (follow it where it is consistent with the rules above):\n${fence(guidance)}` : '',
   ].filter(Boolean).join('\n\n');
 }
@@ -60,12 +61,12 @@ export function userPrompt({ question, sources, history }) {
 export const ANSWER_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['answered', 'answer', 'sources', 'kind'],
+  required: ['answered', 'kind', 'sources', 'answer'],
   properties: {
     answered: { type: 'boolean' },
     kind: { type: 'string', enum: ['grounded', 'conversation', 'clarification', 'unknown'] },
-    answer: { type: 'string' },
     sources: { type: 'array', items: { type: 'string' } },
+    answer: { type: 'string' },
   },
 };
 

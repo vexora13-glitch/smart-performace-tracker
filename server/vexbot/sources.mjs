@@ -5,11 +5,13 @@
 // Never: drafts or documents in review (staff working notes), retired documents, quarantined, infected or
 // unreviewed uploads, or anything belonging to another workspace. Callers recheck workspace access first.
 // File contents are untrusted data; prompt.mjs fences them before they reach the model.
-import { chunk, extractText, MAX_EXTRACT_BYTES, sniff, UPLOAD_TYPES } from './files.mjs';
+import { pageChunks, extractText, MAX_EXTRACT_BYTES, sniff, UPLOAD_TYPES } from './files.mjs';
+import { catalogueMatch, isComparison, isFollowUp, isSummary, normaliseTitle } from './catalogue.mjs';
+import { createHash } from 'node:crypto';
 
 const SHARED_BUCKET = 'portal-private';
 /** Characters of whole-file text given to the model for one answer, split across the files asked about. */
-export const FILE_BUDGET = 60_000;
+export const FILE_BUDGET = 200_000;
 const PROCESSING_STALE_MS = 3 * 60_000;
 const EXTRACT_WAIT_MS = 25_000;
 const SEARCH_EXTRACT_FILES = 2;
@@ -29,7 +31,7 @@ const kindOf = (mime) => (mime?.startsWith('video/') ? 'video' : mime?.startsWit
 
 // ---- Matching what the person asked about -------------------------------------------------------------------
 export function normalise(text) {
-  return ` ${String(text).toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim()} `;
+  return ` ${normaliseTitle(text)} `;
 }
 const stem = (name) => name.replace(/\.[a-z0-9]{1,8}$/i, '');
 
@@ -92,7 +94,7 @@ export async function inventory(db, workspace) {
   const published = new Set(documents.map((row) => row.upload_id).filter(Boolean));
   const inReview = new Set(reviewing.map((row) => row.upload_id));
   return {
-    files: files.map((row) => ({ kind: 'file', id: row.id, name: row.name, mime: row.mime_type, size: Number(row.size_bytes), path: row.path, workspace_id: workspace })),
+    files: files.map((row) => ({ kind: 'file', id: row.id, name: row.name, mime: row.mime_type, size: Number(row.size_bytes), path: row.path, workspace_id: workspace, version: row.created_at })),
     documents: documents.map(documentItem),
     // Uploads that became a published document are read through that document instead.
     uploads: uploads.filter((row) => !published.has(row.id)).map((row) => ({ kind: 'upload', id: row.id, name: row.name, status: row.status, reviewing: inReview.has(row.id) })),
@@ -112,14 +114,24 @@ export function readableNames(inv) {
  */
 export function resolve(question, inv, { attachments = [], recent = [] } = {}) {
   const all = [...inv.files, ...inv.documents, ...inv.uploads];
+  const earlier = recent.map((ref) => all.find((item) => item.kind === ref.kind && item.id === ref.id)).filter(Boolean);
   const named = all.filter((item) => mentions(question, item.name) || mentions(question, item.alias));
-  if (named.length) return { targets: named.slice(0, MAX_TARGETS) };
+  if (named.length) {
+    const exact = named.filter(item => [item.name, item.alias].some(name => name && /\.[a-z0-9]{2,8}$/i.test(name) && normalise(question).includes(normalise(name))));
+    const selected = exact.length ? { targets: exact } : catalogueMatch(question, named) ?? { targets: named };
+    if (selected.targets) selected.targets = [...new Set([...(isComparison(question) ? earlier : []), ...selected.targets])].slice(0, MAX_TARGETS);
+    return selected;
+  }
+  const matched = catalogueMatch(question, all);
+  if (matched) {
+    if (isComparison(question) && matched.targets) matched.targets = [...new Set([...earlier, ...matched.targets])].slice(0, MAX_TARGETS);
+    return matched;
+  }
   const asked = requestedName(question);
   if (asked) return { missing: asked };
   const attached = attachments.map((id) => inv.documents.find((doc) => doc.upload_id === id) ?? inv.uploads.find((upload) => upload.id === id)).filter(Boolean);
   if (attached.length && (refersToFile(question) || attached.some((item) => item.kind === 'document'))) return { targets: attached };
-  if (!refersToFile(question)) return { general: true, attached };
-  const earlier = recent.map((ref) => all.find((item) => item.kind === ref.kind && item.id === ref.id)).filter(Boolean);
+  if (!refersToFile(question) && !(earlier.length && isFollowUp(question))) return { general: true, attached };
   if (earlier.length) return { targets: earlier.slice(0, MAX_TARGETS) };
   const candidates = [...inv.files.filter((file) => readable(file.mime)), ...inv.documents.filter((doc) => doc.workspace_id)];
   if (candidates.length === 1) return { targets: candidates };
@@ -129,13 +141,15 @@ export function resolve(question, inv, { attachments = [], recent = [] } = {}) {
 // ---- Reading a file's contents ------------------------------------------------------------------------------
 // Fallback cache for a deployment whose database does not have vexbot_file_text yet. Bounded.
 const memory = new Map();
-function remember(row) {
-  memory.delete(row.file_id);
-  memory.set(row.file_id, row);
+const fingerprint = file => `index-v2:${createHash('sha256').update(JSON.stringify([file.id, file.workspace_id, file.path, file.size, file.mime, file.version])).digest('hex')}`;
+const memoryKey = (db, file) => `${db.supabaseUrl}:${file.workspace_id}:${file.id}:${fingerprint(file)}`;
+function remember(key, row) {
+  memory.delete(key);
+  memory.set(key, row);
   while (memory.size > 40) memory.delete(memory.keys().next().value);
 }
-async function store(db, row) {
-  remember(row);
+async function store(db, row, key) {
+  remember(key, row);
   const result = await db.from('vexbot_file_text').upsert(row);
   if (result.error && !missingTable(result.error)) throw new Error('Database operation failed');
 }
@@ -146,8 +160,8 @@ async function extractShared(db, file) {
   const bytes = Buffer.from(await data.arrayBuffer());
   const problem = sniff(bytes, file.mime);
   if (problem) return { status: 'failed', content: '', note: problem };
-  const { text } = await extractText(bytes, file.mime);
-  return text ? { status: 'ready', content: text } : { status: 'empty', content: '' };
+  const { text, note } = await extractText(bytes, file.mime);
+  return text ? { status: 'ready', content: note && /truncat/i.test(note) ? `${text.slice(0, 199940)}\n\n[The file continues beyond this point.]` : text, note } : { status: 'empty', content: '' };
 }
 const later = (ms) => {
   let timer;
@@ -163,17 +177,19 @@ export async function sharedText(db, file, { wait = EXTRACT_WAIT_MS } = {}) {
   if (!readable(file.mime)) return { status: 'unsupported', content: '' };
   const cached = await db.from('vexbot_file_text').select('*').eq('file_id', file.id).maybeSingle();
   if (cached.error && !missingTable(cached.error)) throw new Error('Database operation failed');
-  const hit = cached.error ? memory.get(file.id) : cached.data;
-  if (hit && Number(hit.size_bytes) === file.size) {
-    if (hit.status !== 'processing' || Date.now() - Date.parse(hit.updated_at) < PROCESSING_STALE_MS) return hit;
+  const key = memoryKey(db, file);
+  const hit = cached.error ? memory.get(key) : cached.data;
+  if (hit && hit.workspace_id === file.workspace_id && Number(hit.size_bytes) === file.size) {
+    if (hit.status === 'processing' && Date.now() - Date.parse(hit.updated_at) < PROCESSING_STALE_MS) return hit;
+    if (hit.status !== 'processing' && hit.note?.startsWith(fingerprint(file)) && Date.now() - Date.parse(hit.updated_at) < 24 * 3600_000) return hit;
   }
   const base = { file_id: file.id, workspace_id: file.workspace_id, size_bytes: file.size, content: '', note: null };
-  await store(db, { ...base, status: 'processing', updated_at: new Date().toISOString() });
+  await store(db, { ...base, note: fingerprint(file), status: 'processing', updated_at: new Date().toISOString() }, key);
   const work = extractShared(db, file)
     .catch(() => ({ status: 'failed', content: '', note: 'Text extraction failed.' }))
     .then(async (result) => {
-      const row = { ...base, ...result, note: result.note?.slice(0, 300) ?? null, content: result.content.slice(0, 200000), updated_at: new Date().toISOString() };
-      await store(db, row).catch(() => {});
+      const row = { ...base, ...result, note: `${fingerprint(file)} ${result.note ?? ''}`.slice(0, 300), content: result.content.slice(0, 200000), updated_at: new Date().toISOString() };
+      await store(db, row, key).catch(() => {});
       return row;
     });
   const timer = later(wait);
@@ -211,25 +227,27 @@ export function problemText(item, state) {
 export async function readTarget(db, item) {
   if (item.kind === 'upload') return { item, problem: problemText(item, { status: 'upload' }) };
   if (item.kind === 'document') {
-    const row = ok(await db.from('vexbot_documents').select('content,status').eq('id', item.id).single());
-    return row.status === 'published' && row.content ? { item, content: row.content } : { item, problem: `“${item.name}” is no longer published.` };
+    const row = ok(await db.from('vexbot_documents').select('content,status,workspace_id').eq('id', item.id).single());
+    return row.status === 'published' && row.workspace_id === item.workspace_id && row.content ? { item, content: row.content } : { item, problem: `“${item.name}” is no longer published in this workspace.` };
   }
   const state = await sharedText(db, item);
   return state.status === 'ready' && state.content ? { item, content: state.content } : { item, problem: problemText(item, state) };
 }
 
 /** Whole-file sources for the files a question is about, sharing the character budget between them. */
-export function fileSources(read) {
-  const share = Math.floor(FILE_BUDGET / Math.max(1, read.length));
+export function fileSources(read, question = 'summary') {
+  const summary = isSummary(question) || isComparison(question);
+  const total = read.reduce((sum, row) => sum + row.content.length, 0);
+  const share = summary && total <= FILE_BUDGET ? FILE_BUDGET : Math.floor((summary ? FILE_BUDGET : 12_000) / Math.max(1, read.length));
   return read.map(({ item, content }, index) => ({
     id: `F${index + 1}`,
     kind: item.kind,
     file_id: item.kind === 'file' ? item.id : null,
     document_id: item.kind === 'document' ? item.id : null,
     title: item.kind === 'document' ? item.alias || item.name : item.name,
-    label: item.kind === 'file' ? 'shared file' : 'approved document',
-    whole: true,
-    content: content.length > share ? `${content.slice(0, share)}\n\n[The file continues beyond this point.]` : content,
+    label: `${item.kind === 'file' ? 'shared file' : 'approved document'}${summary ? '' : ' (selected passages)'}`,
+    whole: summary,
+    content: content.length <= share ? content : summary ? `${content.slice(0, share)}\n\n[The file continues beyond this point.]` : pageChunks(content).map((text, at) => ({ text, at, score: keywords(question).filter(word => text.toLowerCase().includes(word)).length })).sort((a, b) => b.score - a.score).slice(0, 5).sort((a, b) => a.at - b.at).map(row => row.text).join('\n\n').slice(0, share),
   }));
 }
 
@@ -242,9 +260,10 @@ export async function sharedPassages(db, inv, question, limit = 3) {
   const terms = keywords(question);
   const files = inv.files.filter((file) => readable(file.mime)).slice(0, 20);
   if (!terms.length || !files.length) return [];
-  const cached = await db.from('vexbot_file_text').select('file_id,status,size_bytes,content').eq('workspace_id', files[0].workspace_id).eq('status', 'ready');
+  const cached = await db.from('vexbot_file_text').select('file_id,workspace_id,status,size_bytes,content,note,updated_at').eq('workspace_id', files[0].workspace_id).eq('status', 'ready');
   if (cached.error && !missingTable(cached.error)) throw new Error('Database operation failed');
-  const texts = new Map((cached.error ? [...memory.values()] : cached.data).filter((row) => row.status === 'ready').map((row) => [row.file_id, row]));
+  const valid = (row, file) => row.status === 'ready' && row.workspace_id === file.workspace_id && Number(row.size_bytes) === file.size && row.note?.startsWith(fingerprint(file)) && Date.now() - Date.parse(row.updated_at) < 24 * 3600_000;
+  const texts = new Map((cached.error ? files.map(file => memory.get(memoryKey(db, file))).filter(Boolean) : cached.data).filter(row => files.some(file => row.file_id === file.id && valid(row, file))).map(row => [row.file_id, row]));
   const missing = files.filter((file) => !texts.has(file.id) && file.size <= SEARCH_EXTRACT_BYTES).slice(0, SEARCH_EXTRACT_FILES);
   for (const state of await Promise.all(missing.map((file) => sharedText(db, file, { wait: SEARCH_EXTRACT_WAIT_MS }).catch(() => null))))
     if (state?.status === 'ready') texts.set(state.file_id, state);
@@ -252,7 +271,7 @@ export async function sharedPassages(db, inv, question, limit = 3) {
   for (const file of files) {
     const row = texts.get(file.id);
     if (!row || Number(row.size_bytes) !== file.size) continue;
-    for (const passage of chunk(row.content)) {
+    for (const passage of pageChunks(row.content)) {
       const lower = passage.toLowerCase();
       const hits = terms.filter((term) => lower.includes(term)).length;
       if (hits) scored.push({ file, passage, hits });

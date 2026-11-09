@@ -44,7 +44,7 @@ test('text extraction drafts reviewed text from Office, text and PDF files', asy
   objects.forEach((o, i) => { offsets.push(pdf.length); pdf += `${i + 1} 0 obj\n${o}\nendobj\n`; });
   const xref = pdf.length;
   pdf += `xref\n0 6\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('')}trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
-  assert.equal((await extractText(Buffer.from(pdf, 'latin1'), 'application/pdf')).text, 'Kickoff is on Monday');
+  assert.equal((await extractText(Buffer.from(pdf, 'latin1'), 'application/pdf')).text, '[Page 1]\nKickoff is on Monday');
 });
 
 test('zip inflation is bounded, so a decompression bomb cannot exhaust memory', () => {

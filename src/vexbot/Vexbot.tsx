@@ -51,6 +51,7 @@ import {
   type VoiceProblem,
 } from './voice.ts';
 import { RealtimeVoice, realtimeBlocked } from './realtime.ts';
+import { streamQuestion } from './chat-stream';
 import {
   UPLOAD_ACCEPT,
   UPLOAD_HINT,
@@ -172,6 +173,8 @@ export function Vexbot({
   const recorder = useRef<TurnRecorder | null>(null);
   const operation = useRef(0);
   const sending = useRef(false);
+  const textRequest = useRef<AbortController | null>(null);
+  const [partial, setPartial] = useState('');
   const followBottom = useRef(true);
   const audioRequest = useRef(0);
   const audioUrl = useRef<string | null>(null);
@@ -533,7 +536,7 @@ export function Vexbot({
   }, [conversation]);
   useEffect(() => {
     if (followBottom.current) logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
-  }, [messages, status]);
+  }, [messages, status, partial]);
   function stopAudio() {
     audioRequest.current++;
     audio.current?.pause();
@@ -549,6 +552,8 @@ export function Vexbot({
   }
   function cancelInteraction() {
     operation.current++;
+    textRequest.current?.abort();
+    setPartial('');
     sending.current = false;
     recorder.current?.cancel();
     recorder.current = null;
@@ -560,6 +565,7 @@ export function Vexbot({
   useEffect(
     () => () => {
       operation.current++;
+      textRequest.current?.abort();
       recorder.current?.cancel();
       stopAudio();
       talkRun.current++;
@@ -764,13 +770,21 @@ export function Vexbot({
     };
     setMessages((list) => [...list, temp]);
     setStatus('thinking');
+    const controller = new AbortController();
+    textRequest.current = controller;
+    setPartial('');
+    let incoming = '';
+    let frame = 0;
     try {
-      const result = await api('vexbot', {
+      const result = await streamQuestion<{ conversation: Summary; messages: VexMessage[] }>({
         action: 'ask',
         workspace_id: chosen,
         conversation_id: conversationRef.current,
         question: text,
         attachments: ready.map((row) => row.id),
+      }, controller.signal, text => {
+        incoming += text;
+        if (!frame) frame = requestAnimationFrame(() => { frame = 0; if (epoch === operation.current) setPartial(incoming); });
       });
       if (epoch !== operation.current) return;
       conversationRef.current = result.conversation.id;
@@ -789,7 +803,8 @@ export function Vexbot({
       setNotice((error as Error).message);
       setStatus('idle');
     } finally {
-      if (epoch === operation.current) sending.current = false;
+      cancelAnimationFrame(frame);
+      if (epoch === operation.current) { sending.current = false; setPartial(''); textRequest.current = null; }
     }
   }
 
@@ -1745,8 +1760,8 @@ export function Vexbot({
                   ))}
                 </AnimatePresence>
                 {busy && (
-                  <div className="vexbot-message assistant thinking" aria-hidden="true">
-                    <Loader2 size={16} className="spin" /> Thinking…
+                  <div className={`vexbot-message assistant ${partial ? '' : 'thinking'}`} aria-busy="true">
+                    {partial || <><Loader2 size={16} className="spin" /> Reading your workspace…</>}
                   </div>
                 )}
               </div>
@@ -1755,6 +1770,7 @@ export function Vexbot({
             <p className="vexbot-status" role="status" data-testid="vexbot-status">
               {notice || statusText}
             </p>
+            {busy && <button type="button" className="vexbot-play" onClick={() => { setQuestion(messages.findLast(message => message.pending && message.role === 'user')?.content ?? ''); cancelInteraction(); setNotice('Reply stopped. You can ask again.'); }}><Square size={14} /> Stop response</button>}
 
             {!needsWorkspace && (
               <form className="vexbot-composer" onSubmit={onSubmit}>

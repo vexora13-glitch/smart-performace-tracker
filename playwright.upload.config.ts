@@ -3,6 +3,7 @@ import { defineConfig } from '@playwright/test';
 // Real uploads to the isolated loopback Supabase stack. No hosted/customer writes.
 export default defineConfig({
   testDir: './tests/uploads',
+  outputDir: './artifacts/playwright/uploads',
   workers: 1,
   timeout: 600_000,
   expect: { timeout: 20_000 },

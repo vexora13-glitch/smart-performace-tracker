@@ -1,4 +1,4 @@
-import { Captions, Film, Info, Layers, Maximize, Minimize, Pause, PictureInPicture2, Play, RotateCcw, RotateCw, Settings, Volume2, VolumeX } from 'lucide-react';
+import { Captions, Film, Layers, Maximize, Minimize, PanelRightClose, PanelRightOpen, Pause, PictureInPicture2, Play, RotateCcw, RotateCw, Settings, TvMinimal, Volume2, VolumeX, X } from 'lucide-react';
 import { memo, useCallback, useEffect, useId, useRef, useState, type RefObject } from 'react';
 import { activeChapter, formatVideoTime, type Chapter } from './video-chapters';
 import styles from './video.module.css';
@@ -10,20 +10,18 @@ export const ChapterThumbnail = memo(function ChapterThumbnail({ url }: { url?: 
   </span>;
 });
 
-const ChapterList = memo(function ChapterList({ chapters, current, seek, id, duration }: {
-  chapters: Chapter[]; current?: string; seek: (seconds: number) => void; id: string; duration: number;
+const ChapterList = memo(function ChapterList({ chapters, current, seek, id, duration, hidden }: {
+  chapters: Chapter[]; current?: string; seek: (seconds: number) => void; id: string; duration: number; hidden: boolean;
 }) {
-  return <nav id={id} aria-label="Video chapters" className={styles.chapterPanel}>
+  return <nav id={id} aria-label="Video chapters" className={styles.chapterPanel} hidden={hidden}>
     <div className={styles.chapterHeader}><h2><Layers /> Video Chapters</h2><span>{formatVideoTime(duration)}</span></div>
     <ol>
       {chapters.map((chapter, index) => <li key={chapter.id}>
         <button type="button" aria-current={current === chapter.id ? 'true' : undefined} onClick={() => seek(chapter.start)}
-          title={chapter.description || chapter.title}>
+          title={[chapter.title, chapter.description].filter(Boolean).join(' — ')}>
           <span className={styles.chapterNumber}>{index + 1}</span>
           <ChapterThumbnail url={chapter.thumbnailUrl} />
-          <span className={styles.chapterCopy}><strong>{chapter.title}</strong></span>
-          <span className={styles.chapterTime}>{formatVideoTime(chapter.start)}</span>
-          {current === chapter.id && <Play className={styles.chapterPlay} size={21} fill="currentColor" />}
+          <span className={styles.chapterCopy}><strong>{chapter.title}</strong><span className={styles.chapterTime}>{formatVideoTime(chapter.start)}</span></span>
         </button>
       </li>)}
     </ol>
@@ -32,12 +30,15 @@ const ChapterList = memo(function ChapterList({ chapters, current, seek, id, dur
 
 export type Playback = { url: string; chapters: Chapter[]; title: string; captions?: { src: string; language: string; label: string }[] };
 
-export function ChapterPlayer({ playback, videoRef, onRetry, resumeAt = 0, autoPlay = false }: {
-  playback: Playback; videoRef?: RefObject<HTMLVideoElement | null>; onRetry?: (seconds: number) => void; resumeAt?: number; autoPlay?: boolean;
+export function ChapterPlayer({ playback, videoRef, onRetry, resumeAt = 0, autoPlay = false, onClose }: {
+  playback: Playback; videoRef?: RefObject<HTMLVideoElement | null>; onRetry?: (seconds: number) => void; resumeAt?: number; autoPlay?: boolean; onClose?: () => void;
 }) {
   const internalRef = useRef<HTMLVideoElement>(null);
   const ref = videoRef ?? internalRef;
   const mediaRef = useRef<HTMLDivElement>(null);
+  const workspaceRef = useRef<HTMLElement>(null);
+  const [chaptersVisible, setChaptersVisible] = useState(true);
+  const [theatre, setTheatre] = useState(false);
   const settingsRef = useRef<HTMLDivElement>(null);
   const pendingSeek = useRef<number | null>(resumeAt || null);
   const [time, setTime] = useState(0);
@@ -119,13 +120,30 @@ export function ChapterPlayer({ playback, videoRef, onRetry, resumeAt = 0, autoP
       else await ref.current?.requestPictureInPicture();
     } catch { setStatus('Picture-in-picture is unavailable for this video.'); }
   }
+  async function fullscreenWorkspace() {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else if (workspaceRef.current?.requestFullscreen) await workspaceRef.current.requestFullscreen();
+      else await toggleFullscreen();
+    } catch { setStatus('Fullscreen is unavailable in this browser.'); }
+  }
   function toggleCaptions() {
     const tracks = Array.from(ref.current?.textTracks ?? []).filter(track => ['captions', 'subtitles'].includes(track.kind));
     tracks.forEach((track, index) => { track.mode = !captioned && index === 0 ? 'showing' : 'disabled'; });
   }
   const displayTitle = title.replace(/\.(mp4|webm|mov|m4v)$/i, '');
-  return <section className={styles.player} aria-label={`Video player for ${title}`}>
-    <div className={`${styles.playerGrid} ${chapters.length ? styles.withChapters : ''}`}>
+  const showChapters = chaptersVisible && !theatre;
+  return <section ref={workspaceRef} className={`${styles.player} ${onClose ? styles.immersive : ''} ${theatre ? styles.theatre : ''}`} aria-label={`Video player for ${title}`}>
+    <header className={styles.playerHeading}>
+      <div className={styles.headingCopy}><h2 title={displayTitle}>{displayTitle}</h2><span>{formatVideoTime(duration)} · {chapters.length} chapters</span></div>
+      <div className={styles.headingTools}>
+        {chapters.length > 0 && <button type="button" aria-label={showChapters ? 'Hide chapters' : 'Show chapters'} aria-controls={chapterId} aria-expanded={showChapters} onClick={() => { setChaptersVisible(!showChapters); setTheatre(false); }}>{showChapters ? <PanelRightClose /> : <PanelRightOpen />}</button>}
+        <button type="button" aria-label={theatre ? 'Exit theatre mode' : 'Enter theatre mode'} aria-pressed={theatre} onClick={() => setTheatre(value => !value)}><TvMinimal /></button>
+        <button type="button" aria-label="Fullscreen workspace" onClick={() => void fullscreenWorkspace()}><Maximize /></button>
+        {onClose && <button type="button" aria-label="Close video" onClick={onClose}><X /></button>}
+      </div>
+    </header>
+    <div className={`${styles.playerGrid} ${chapters.length && showChapters ? styles.withChapters : ''}`}>
       <div className={styles.media} ref={mediaRef} onKeyDown={event => {
         if ((event.target as HTMLElement).closest('button,input,select') || event.altKey || event.ctrlKey || event.metaKey) return;
         const key = event.key.toLowerCase();
@@ -195,10 +213,9 @@ export function ChapterPlayer({ playback, videoRef, onRetry, resumeAt = 0, autoP
           </div>
         </div>}
       </div>
-      {chapters.length > 0 && <ChapterList id={chapterId} chapters={chapters} duration={duration} seek={seek} current={current} />}
+      {chapters.length > 0 && <ChapterList id={chapterId} chapters={chapters} duration={duration} seek={seek} current={current} hidden={!showChapters} />}
     </div>
-    <div className={styles.presentation}><h2>{displayTitle} – Full Presentation</h2><p>Duration: {formatVideoTime(duration)} <span>|</span> {chapters.length} {chapters.length === 1 ? 'Chapter' : 'Chapters'}</p></div>
-    <div className={styles.information}><Info /><p>{chapters.length ? 'Use the chapter list to jump to a specific section, or watch the full video for a complete overview.' : 'Watch the full video using the playback controls below the presentation.'}</p></div>
+    {!theatre && <details className={styles.information}><summary>About this presentation</summary><p>Choose a chapter to jump to a section. Keyboard: Space or K to play/pause, J/L to skip, M to mute and F for fullscreen. Playback links last one hour; reload an expired link to continue.</p></details>}
     {status && <p role="status">{status}</p>}
   </section>;
 }

@@ -121,18 +121,20 @@ async function pdfText(bytes) {
   pdfjs ??= await import('pdfjs-dist/legacy/build/pdf.mjs');
   const task = pdfjs.getDocument({ data: new Uint8Array(bytes), isEvalSupported: false, useSystemFonts: false, verbosity: 0 });
   const document = await task.promise;
+  const pageCount = document.numPages;
   const pages = [];
   try {
     for (let number = 1; number <= Math.min(document.numPages, 300); number++) {
       const page = await document.getPage(number);
       const content = await page.getTextContent();
-      pages.push(content.items.map((item) => item.str + (item.hasEOL ? '\n' : ' ')).join('').trim());
+      const text = content.items.map((item) => item.str + (item.hasEOL ? '\n' : ' ')).join('').trim();
+      pages.push(text ? `[Page ${number}]\n${text}` : '');
       if (pages.join('\n\n').length > MAX_TEXT) break;
     }
   } finally {
     await task.destroy();
   }
-  return pages.join('\n\n');
+  return pages.join('\n\n') + (pages.length < pageCount ? '\n\n[The file continues beyond this point.]' : '');
 }
 
 /** A draft of the file's text for staff to review. Images and video need text written by staff. */
@@ -165,7 +167,7 @@ export function chunk(text) {
   const chunks = [];
   let current = '';
   for (const paragraph of text.split(/\n\s*\n/).map((part) => part.trim()).filter(Boolean)) {
-    const pieces = paragraph.length > 1200 ? paragraph.match(/[\s\S]{1,1200}(?:\s|$)/g) : [paragraph];
+    const pieces = paragraph.length > 1200 ? paragraph.match(/[\s\S]{1,1200}/g) : [paragraph];
     for (const piece of pieces) {
       if (current && current.length + piece.length + 2 > 1200) { chunks.push(current); current = ''; }
       current = current ? `${current}\n\n${piece.trim()}` : piece.trim();
@@ -173,4 +175,12 @@ export function chunk(text) {
   }
   if (current) chunks.push(current);
   return chunks.map((content) => content.slice(0, 4000));
+}
+
+/** Preserve the PDF page on every passage, including passages starting midway down a long page. */
+export function pageChunks(text) {
+  return text.split(/(?=\[Page \d+\])/).flatMap(section => {
+    const page = /^\[Page \d+\]/.exec(section)?.[0];
+    return chunk(section).map(passage => page && !passage.startsWith(page) ? `${page}\n${passage}` : passage);
+  });
 }

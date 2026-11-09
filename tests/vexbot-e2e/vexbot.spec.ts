@@ -342,6 +342,7 @@ test.describe('mobile Chrome (Pixel 7)', () => {
     await expect(page.getByTestId('vexbot-sources').last()).toContainText('Synthetic: Onboarding guide');
     await shot(page, 'mobile-02-client-sheet-answer');
     await page.getByLabel('Close Vexbot').tap();
+    await page.getByRole('button', { name: 'Open navigation menu' }).tap();
     await page.getByRole('button', { name: /Messages/ }).first().tap();
     await resting(page);
     await shot(page, 'mobile-03-client-messages');

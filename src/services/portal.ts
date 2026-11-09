@@ -123,6 +123,12 @@ export async function uploadFile(workspace: string, file: File, options: UploadO
     if (!existing.error && !existing.data) await db().storage.from('portal-private').remove([path]);
     throw error;
   }
+  // Start indexing after the authorised library record exists; failure never rolls back a successful upload.
+  if (!file.type.startsWith('video/') && !file.type.startsWith('image/')) {
+    void db().from('portal_files').select('id').eq('workspace_id', workspace).eq('path', path).maybeSingle().then(({ data }) => {
+      if (data) void api('vexbot', { action: 'file_index', workspace_id: workspace, file_id: data.id }).catch(() => {});
+    });
+  }
 }
 export async function removeFile(file: PortalFile) {
   unwrap(await db().storage.from('portal-private').remove([file.path]));

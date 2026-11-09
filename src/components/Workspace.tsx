@@ -88,6 +88,12 @@ export function Workspace({
   const [presentation, setPresentation] = useState<{ url: string; file: PortalFile } | null>(null);
   const [presentationRevision, setPresentationRevision] = useState(0);
   const videoDialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    if (!video) return;
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = overflow; };
+  }, [video]);
   const [removing, setRemoving] = useState<PortalFile | null>(null);
   const removeDialog = useRef<HTMLDialogElement>(null);
   const files = useMemo(() => data.files.filter((row) => row.workspace_id === client.id), [data.files, client.id]);
@@ -618,12 +624,13 @@ export function Workspace({
       </div></section>}
       </div>
       <dialog
-        className="video-dialog"
+        className={`video-dialog ${video?.edit ? 'video-editor-dialog' : 'video-viewer-dialog'}`}
         ref={videoDialog}
-        aria-labelledby="video-title"
+        aria-label={video?.edit ? 'Manage video chapters' : video?.file.name || 'Video presentation'}
+        onCancel={event => { if (document.fullscreenElement) { event.preventDefault(); void document.exitFullscreen(); } }}
         onClose={() => { setVideo(null); setPresentationRevision(value => value + 1); }}
       >
-        <div className="panel-heading">
+        {video?.edit && <div className="panel-heading">
           <h2 id="video-title">{video?.edit ? 'Manage video chapters' : video?.file.name}</h2>
           <button
             className="icon-button"
@@ -632,15 +639,14 @@ export function Workspace({
           >
             <X size={21} />
           </button>
-        </div>
+        </div>}
         {video && (
           <Suspense fallback={<p role="status">Opening video…</p>}>
             {video.edit
               ? <VideoChapterEditor file={video.file} url={video.url} onClose={() => videoDialog.current?.close()} />
-              : <ClientVideo file={video.file} url={video.url} />}
+              : <ClientVideo file={video.file} url={video.url} onClose={() => videoDialog.current?.close()} />}
           </Suspense>
         )}
-        <p>Playback links expire after one hour. Reopen the video to refresh.</p>
       </dialog>
       <dialog
         ref={removeDialog}

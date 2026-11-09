@@ -91,6 +91,8 @@ export default async function seed() {
   };
   await share('pike point.pdf', 'application/pdf', pdf(PIKE_POINT));
   await share('part-one.txt', 'text/plain', Buffer.from('Part one\n\nThe discovery phase covers interviews with five staff members and a review of the current booking process.'));
+  await share('Vexora_Smart_Express_Private_Sale_Proposal_Draft.pdf', 'application/pdf', pdf([['The proposal delivers a booking website.', 'The cost is NZD 42,000.', 'Delivery includes client training.']]));
+  await share('Private-Sale-Statement-of-Work.pdf', 'application/pdf', pdf([['The statement of work specifies weekly training.', 'The SOW includes acceptance testing.']]));
 
   await mkdir('artifacts', { recursive: true });
   await writeFile('artifacts/vexbot-voice.wav', speechLike());

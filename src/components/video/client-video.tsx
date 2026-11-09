@@ -4,7 +4,7 @@ import { ChapterPlayer } from './chapter-player';
 import type { Chapter } from './video-chapters';
 import { fileUrl, loadChapters } from './video-service';
 
-export default function ClientVideo({ file, url }: { file: PortalFile; url: string }) {
+export default function ClientVideo({ file, url, onClose }: { file: PortalFile; url: string; onClose?: () => void }) {
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [error, setError] = useState('');
   const [source, setSource] = useState({ url, key: 0, resumeAt: 0 });
@@ -28,7 +28,7 @@ export default function ClientVideo({ file, url }: { file: PortalFile; url: stri
   }
   return <>
     <ChapterPlayer key={source.key} playback={{ url: source.url, chapters, title: file.name }}
-      onRetry={reload} resumeAt={source.resumeAt} autoPlay={source.key === 0} />
+      onRetry={reload} resumeAt={source.resumeAt} autoPlay={source.key === 0} onClose={onClose} />
     {error && <p role="status">{error}</p>}
   </>;
 }

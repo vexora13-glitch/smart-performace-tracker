@@ -69,6 +69,26 @@ test('Test workspace: text answer from the shared PDF, with its citation', async
   expect(errors).toEqual([]);
 });
 
+test('natural proposal recognition, pricing follow-up and SOW selection through the local streaming route', async ({ page, isMobile }) => {
+  test.skip(isMobile, 'desktop only');
+  const errors = await login(page);
+  await page.getByTestId('vexbot-launcher').click();
+  await page.getByTestId('vexbot-input').fill('Can you summarise the proposal in a few minutes?');
+  const response = page.waitForResponse(response => response.url().endsWith('/api/vexbot') && response.request().postDataJSON()?.action === 'ask');
+  await page.getByTestId('vexbot-send').click();
+  expect((await response).headers()['content-type']).toContain('text/event-stream');
+  await expect(page.getByTestId('vexbot-assistant').last()).toContainText('booking website');
+  await expect(page.getByTestId('vexbot-sources').last()).toContainText('Proposal_Draft.pdf');
+  await page.getByTestId('vexbot-input').fill('How much will it cost?');
+  await page.getByTestId('vexbot-send').click();
+  await expect(page.getByTestId('vexbot-assistant').last()).toContainText('42,000');
+  await page.getByTestId('vexbot-input').fill('Summarise the SOW');
+  await page.getByTestId('vexbot-send').click();
+  await expect(page.getByTestId('vexbot-assistant').last()).toContainText('weekly training');
+  await expect(page.getByTestId('vexbot-sources').last()).toContainText('Statement-of-Work.pdf');
+  expect(errors).toEqual([]);
+});
+
 test('Test workspace: talk to the robot with the chat panel closed', async ({ page, context, isMobile }) => {
   const prefix = isMobile ? 'files-mobile' : 'files';
   await context.grantPermissions(['microphone']);

@@ -44,6 +44,46 @@ async function media(page: Page, snapshots: Snapshot[], canEdit: boolean) {
   });
 }
 
+for (const [width, height] of [[1920, 1080], [1440, 900], [1366, 768], [768, 1024], [390, 844]]) {
+  test(`presentation workspace at ${width}x${height}`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    const member = await fixture(page, 'client');
+    member.state.portal_files.push(video);
+    await media(page, [{ state: 'published', revision: 1, chapters: Array.from({ length: 18 }, (_, index) => ({
+      id: `chapter-${index}`, title: index ? `Deliverables, responsibilities and implementation milestones ${index}` : 'Opening', start: index ? 3 + index / 100 : 0,
+    })) }], false);
+    await page.reload();
+    await page.getByRole('button', { name: 'Play Demo.webm' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('navigation', { name: 'Video chapters' })).toBeVisible();
+    await expect.poll(() => dialog.locator('video').evaluate((v: HTMLVideoElement) => v.readyState)).toBeGreaterThanOrEqual(1);
+    await page.screenshot({ path: `artifacts/screenshots/video-${process.env.VIDEO_BASELINE ? 'before' : 'after'}-${width}.png` });
+    if (process.env.VIDEO_BASELINE) return;
+    const box = await dialog.boundingBox();
+    expect(box!.width).toBeGreaterThan(width * .95);
+    expect(box!.height).toBeGreaterThan(height * .95);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    const element = dialog.locator('video');
+    await expect.poll(() => element.evaluate((v: HTMLVideoElement) => v.readyState)).toBeGreaterThanOrEqual(1);
+    await element.evaluate((v: HTMLVideoElement) => { v.pause(); v.currentTime = 2; v.dataset.continuity = 'original'; });
+    await dialog.getByRole('button', { name: 'Hide chapters' }).click();
+    await expect(dialog.getByRole('navigation', { name: 'Video chapters' })).toBeHidden();
+    await dialog.getByRole('button', { name: 'Show chapters' }).click();
+    await dialog.getByRole('button', { name: 'Enter theatre mode' }).click();
+    await expect(element).toHaveAttribute('data-continuity', 'original');
+    expect(await element.evaluate((v: HTMLVideoElement) => v.currentTime)).toBeCloseTo(2, 0);
+    await dialog.getByRole('button', { name: 'Exit theatre mode' }).click();
+    await dialog.getByRole('button', { name: 'Fullscreen workspace' }).click();
+    await expect.poll(() => page.evaluate(() => Boolean(document.fullscreenElement))).toBe(true);
+    await page.evaluate(() => document.exitFullscreen());
+    await expect(dialog).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+    await expect.poll(() => page.evaluate(() => document.body.style.overflow)).not.toBe('hidden');
+    expect(member.errors).toEqual([]);
+  });
+}
+
 test('staff publish chapters and a client can seek by keyboard on mobile', async ({ page, browser }) => {
   test.setTimeout(90_000);
   const snapshots: Snapshot[] = [];

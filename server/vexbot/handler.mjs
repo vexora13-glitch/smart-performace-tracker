@@ -6,7 +6,7 @@ import { INTERRUPTED_VOICE_TEXT, realtimeReadiness } from './realtime.mjs';
 import { randomUUID } from 'node:crypto';
 import { authenticate, check, database, method, respondError } from '../runtime.mjs';
 import { HttpError, id as uuid, requiredText } from '../validation.mjs';
-import { chunk, declaredFile, extractText, sniff } from './files.mjs';
+import { pageChunks, declaredFile, extractText, sniff } from './files.mjs';
 import { createProvider, providerSetup } from './provider.mjs';
 import { createScanner } from './scanner.mjs';
 import { contactText, DETAIL, noAnswerText, PROFILE_FIELDS, profileText, TONES, validateAnswer } from './prompt.mjs';
@@ -89,10 +89,10 @@ async function optionalRows(query) {
  */
 async function present(ctx, conversation, messages) {
   const ids = messages.filter((m) => m.role === 'assistant').map((m) => m.id);
-  const citations = ids.length
-    ? check(await ctx.db.from('vexbot_citations').select('message_id,document_id,excerpt,vexbot_documents(title,status,workspace_id)').in('message_id', ids))
-    : [];
-  const fileCitations = (ids.length ? await optionalRows(ctx.db.from('vexbot_file_citations').select('message_id,file_id,file_name,excerpt').in('message_id', ids)) : null) ?? [];
+  const [citations, fileCitations] = ids.length ? await Promise.all([
+    ctx.db.from('vexbot_citations').select('message_id,document_id,excerpt,vexbot_documents(title,status,workspace_id)').in('message_id', ids).then(check),
+    optionalRows(ctx.db.from('vexbot_file_citations').select('message_id,file_id,file_name,excerpt').in('message_id', ids)).then(rows => rows ?? []),
+  ]) : [[], []];
   const fileIds = [...new Set(fileCitations.map((c) => c.file_id))];
   const live = new Map((fileIds.length ? check(await ctx.db.from('portal_files').select('id,workspace_id').in('id', fileIds)) : []).map((row) => [row.id, row.workspace_id]));
   return messages.map((message) => {
@@ -126,6 +126,7 @@ async function gather(ctx, workspace, question, history, settings, inv) {
       const key = `${row.document_id}:${row.content}`;
       if (!seen.has(key) && rows.length < 6) { seen.add(key); rows.push(row); }
     }
+    if (rows.length) break; // Fall back to older intent only when the current query found nothing.
   }
   const passages = [
     ...rows.map((row) => ({ kind: 'document', document_id: row.document_id, file_id: null, title: row.title, content: row.content })),
@@ -145,18 +146,24 @@ const failedText = (profile) => `Vexbot couldn't reach its answer service just n
  * about the files themselves (not found, still processing, unsupported, awaiting review), or { sources, notes }.
  */
 async function plan(ctx, { workspace, question, history, settings, attachments, recent }) {
+  const lookupStarted = performance.now();
   const inv = await inventory(ctx.db, workspace);
+  if (ctx.timings) ctx.timings.catalogue = performance.now() - lookupStarted;
   const choice = resolve(question, inv, { attachments, recent });
   const listed = (names) => (names.length ? ` Files I can read here: ${names.slice(0, 12).map((name) => `“${name}”`).join(', ')}.` : ' There are no files I can read in this workspace yet.');
   if (choice.missing) return { reply: `I couldn't find a file called “${choice.missing}” in this workspace.${listed(readableNames(inv))}` };
-  if (choice.ambiguous) return { reply: choice.ambiguous.length ? `Which file do you mean?${listed(readableNames(inv))}` : `There are no files I can read in this workspace yet. Files shared by Vexora appear under Shared files, and your uploads become available after they are scanned and approved.` };
+  if (choice.ambiguous) return { reply: choice.ambiguous.length ? `Which file do you mean: ${choice.ambiguous.slice(0, 8).map(item => `“${item.alias || item.name}”`).join(', ')}?` : `There are no files I can read in this workspace yet. Files shared by Vexora appear under Shared files, and your uploads become available after they are scanned and approved.` };
   if (choice.targets) {
+    const retrievalStarted = performance.now();
     const read = await Promise.all(choice.targets.map((item) => readTarget(ctx.db, item)));
+    if (ctx.timings) ctx.timings.retrieval = performance.now() - retrievalStarted;
     const usable = read.filter((row) => row.content);
     const problems = read.filter((row) => row.problem).map((row) => row.problem);
     if (!usable.length) return { reply: problems.join(' ') };
     const profile = profileText(settings.business_profile);
-    const sources = fileSources(usable);
+    const sources = fileSources(usable, question);
+    if (sources.some(source => source.content.includes('[The file continues beyond this point.]')))
+      problems.push('This answer covers only the text available within the document processing and context limits; it is not a complete summary of the original file.');
     if (profile) sources.push({ id: 'P', kind: 'profile', document_id: null, file_id: null, title: 'Vexora business profile', content: profile });
     return { sources, notes: problems };
   }
@@ -169,6 +176,8 @@ async function plan(ctx, { workspace, question, history, settings, attachments, 
 async function answer(ctx, { workspace, question, history, settings, attachments = [], recent = [] }) {
   const profile = settings.business_profile ?? {};
   const none = { cited: [], usesProfile: false };
+  if (!attachments.length && /^(?:hi|hello|hey|kia ora|thanks|thank you)[!.\s]*$/i.test(question.trim()))
+    return { outcome: 'answered', content: /thank/i.test(question) ? 'You’re welcome. Let me know what else you need.' : 'Kia ora. What would you like to know about your workspace?', ...none };
   const planned = await plan(ctx, { workspace, question, history, settings, attachments, recent });
   if (planned.reply) return { outcome: 'no_answer', content: planned.reply, ...none };
   const note = planned.notes.length ? `\n\n${planned.notes.join(' ')}` : '';
@@ -176,8 +185,18 @@ async function answer(ctx, { workspace, question, history, settings, attachments
   const { sources } = planned;
   let result;
   try {
-    result = validateAnswer(await ctx.provider.answer({ settings, question, sources, history }), sources);
+    const started = performance.now();
+    let first = false;
+    result = validateAnswer(await ctx.provider.answer({ settings, question, sources, history, signal: ctx.signal,
+      onDelta: ctx.emit ? async text => {
+        ctx.signal.throwIfAborted();
+        if (!first) { ctx.timings.first_text = performance.now() - ctx.started; first = true; }
+        ctx.emit('delta', { text });
+      } : undefined,
+    }), sources);
+    if (ctx.timings) ctx.timings.model = performance.now() - started;
   } catch (error) {
+    if (ctx.signal?.aborted) throw error;
     // Status only: enough to tell a bad key (401), an unknown model (404) or a rate limit (429) apart.
     console.error(`[vexbot] answer service failed${error?.status ? ` (HTTP ${error.status})` : error?.name === 'TimeoutError' ? ' (timeout)' : ''}`);
     return { outcome: 'unavailable', content: (error?.status === 401 || error?.status === 403 ? "The answer service rejected the portal credentials. Ask the portal administrator to check its server API key and permissions." : error?.status === 429 ? "The answer service is rate limited or its quota is exhausted. Please try later; the portal administrator can check usage limits." : error?.status === 404 ? "The configured answer model is unavailable. The portal administrator needs to check the server model setting." : error?.name === "TimeoutError" ? "The answer service timed out. Please try again." : failedText(profile)) + note, ...none };
@@ -277,7 +296,9 @@ const ACTIONS = {
     const question = requiredText(input.question, 'question', 2000);
     const attachments = Array.isArray(input.attachments) ? [...new Set(input.attachments.map(uuid))] : [];
     if (attachments.length > 5) throw new HttpError(400, 'Attach at most five files.');
+    const authStarted = performance.now();
     await requireAccess(ctx, workspace);
+    if (ctx.timings) ctx.timings.authorization = performance.now() - authStarted;
     if (workspace === null && attachments.length) throw new HttpError(400, 'Choose a workspace to attach files.');
     if (workspace !== null) await checkAttachments(ctx, workspace, attachments);
     const since = new Date(Date.now() - 3600_000).toISOString();
@@ -285,36 +306,64 @@ const ACTIONS = {
     if (countError) throw new HttpError(503, 'Usage limits could not be checked. Please try again shortly.');
     if ((count ?? 0) >= QUESTIONS_PER_HOUR) throw new HttpError(429, 'You have asked a lot of questions this hour. Please try again later or message the team.');
 
-    let conversation;
-    let history = [];
-    let recent = [];
-    if (input.conversation_id) {
-      conversation = await conversationFor(ctx, input.conversation_id);
-      if (conversation.workspace_id !== workspace) throw new HttpError(400, 'This conversation belongs to another workspace.');
-      // Withdrawn answers are not fed back to the model.
-      const shown = await present(ctx, conversation, await messagesOf(ctx, conversation.id));
-      history = selectHistory(shown);
-      // "Summarise it" after an answer about a file means that same file.
-      recent = (shown.filter((m) => m.role === 'assistant' && !m.withdrawn).at(-1)?.citations ?? []).map((c) => ({ kind: c.kind, id: c.id }));
-    } else {
-      conversation = check(await ctx.db.from('vexbot_conversations').insert({ workspace_id: workspace, user_id: ctx.user.id, title: question.replace(/\s+/g, ' ').slice(0, 80) }).select('*').single());
-    }
-    const settings = await loadSettings(ctx);
+    const [settings, state] = await Promise.all([loadSettings(ctx), (async () => {
+      let conversation;
+      let history = [];
+      let recent = [];
+      if (input.conversation_id) {
+        conversation = await conversationFor(ctx, input.conversation_id);
+        if (conversation.workspace_id !== workspace) throw new HttpError(400, 'This conversation belongs to another workspace.');
+        // Withdrawn answers are not fed back to the model.
+        const shown = await present(ctx, conversation, await messagesOf(ctx, conversation.id));
+        history = selectHistory(shown);
+        // Follow-ups use the latest authorised citation, rather than all historical topics.
+        recent = (shown.filter((m) => m.role === 'assistant' && !m.withdrawn).at(-1)?.citations ?? []).map((c) => ({ kind: c.kind, id: c.id }));
+      } else {
+        conversation = check(await ctx.db.from('vexbot_conversations').insert({ workspace_id: workspace, user_id: ctx.user.id, title: question.replace(/\s+/g, ' ').slice(0, 80) }).select('*').single());
+      }
+      return { conversation, history, recent };
+    })()]);
+    const { conversation, history, recent } = state;
+    const retrievalStarted = performance.now();
     const result = await answer(ctx, { workspace, question, history, settings, attachments, recent });
-    const asked = check(await ctx.db.from('vexbot_messages').insert({ conversation_id: conversation.id, role: 'user', content: question, attachments }).select('*').single());
-    const reply = check(await ctx.db.from('vexbot_messages').insert({ conversation_id: conversation.id, role: 'assistant', content: result.content.slice(0, 20000), outcome: result.outcome, uses_profile: result.usesProfile }).select('*').single());
+    if (ctx.timings) ctx.timings.answer = performance.now() - retrievalStarted;
+    ctx.signal?.throwIfAborted();
+    await requireAccess(ctx, workspace);
+    const persistenceStarted = performance.now();
+    const at = Date.now();
+    // One atomic insert prevents a failed second write leaving a half-saved turn.
+    const pair = check(await ctx.db.from('vexbot_messages').insert([
+      { conversation_id: conversation.id, role: 'user', content: question, attachments, outcome: null, uses_profile: false, created_at: new Date(at).toISOString() },
+      { conversation_id: conversation.id, role: 'assistant', content: result.content.slice(0, 20000), attachments: [], outcome: result.outcome, uses_profile: result.usesProfile, created_at: new Date(at + 1).toISOString() },
+    ]).select('*'));
+    const asked = pair.find(message => message.role === 'user');
+    const reply = pair.find(message => message.role === 'assistant');
     const documents = result.cited.filter((c) => c.kind === 'document');
     const files = result.cited.filter((c) => c.kind === 'file');
-    if (documents.length) check(await ctx.db.from('vexbot_citations').insert(documents.map((c) => ({ message_id: reply.id, document_id: c.document_id, excerpt: c.excerpt }))));
     // Before the workspace-files migration the file citation is shown now but not kept with the answer.
-    if (files.length) await optionalRows(ctx.db.from('vexbot_file_citations').insert(files.map((c) => ({ message_id: reply.id, file_id: c.file_id, file_name: c.title, excerpt: c.excerpt }))));
+    await Promise.all([
+      documents.length ? ctx.db.from('vexbot_citations').insert(documents.map((c) => ({ message_id: reply.id, document_id: c.document_id, excerpt: c.excerpt }))).then(check) : null,
+      files.length ? optionalRows(ctx.db.from('vexbot_file_citations').insert(files.map((c) => ({ message_id: reply.id, file_id: c.file_id, file_name: c.title, excerpt: c.excerpt })))) : null,
+    ]);
     check(await ctx.db.from('vexbot_conversations').update({ updated_at: new Date().toISOString() }).eq('id', conversation.id));
     const [user, assistant] = await present(ctx, conversation, [asked, reply]);
+    if (ctx.timings) ctx.timings.persistence = performance.now() - persistenceStarted;
     if (!assistant.withdrawn && files.length && !assistant.citations.some((c) => c.kind === 'file'))
       assistant.citations.push(...files.map((c) => ({ kind: 'file', id: c.file_id, file_id: c.file_id, title: c.title, excerpt: c.excerpt })));
     // Voice mode asks for the spoken reply in the same request, so it plays without a second round trip.
-    const spoken = input.speak === true && assistant.outcome !== 'unavailable' ? await synthesise(ctx, assistant.content) : {};
+    if (ctx.emit) ctx.emit('answer', { conversation: { id: conversation.id }, messages: [user, assistant] });
+    const spoken = input.speak === true && !assistant.withdrawn && assistant.outcome !== 'unavailable' ? await synthesise(ctx, assistant.content) : {};
     return { conversation: { id: conversation.id, title: conversation.title, workspace_id: conversation.workspace_id }, messages: [user, assistant], contact: { email: settings.business_profile?.contact_email ?? null, phone: settings.business_profile?.contact_phone ?? null }, ...spoken };
+  },
+
+  async file_index(ctx, input) {
+    const workspace = workspaceInput(ctx, input.workspace_id);
+    await requireAccess(ctx, workspace);
+    const inv = await inventory(ctx.db, workspace);
+    const file = inv.files.find(file => file.id === uuid(input.file_id));
+    if (!file) throw new HttpError(404, 'File not found in this workspace.');
+    const result = await readTarget(ctx.db, file);
+    return { ready: Boolean(result.content), detail: result.problem ?? null };
   },
 
   async transcribe(ctx, input) {
@@ -445,7 +494,7 @@ const ACTIONS = {
     const document = check(await ctx.db.from('vexbot_documents').select('*').eq('id', uuid(input.id)).single());
     const allowed = { draft: ['in_review'], in_review: ['draft', 'published'], published: ['retired'], retired: ['draft'] };
     if (!allowed[document.status]?.includes(input.to)) throw new HttpError(409, `A ${document.status.replace('_', ' ')} document cannot move to ${String(input.to).replace('_', ' ')}.`);
-    const passages = input.to === 'published' ? chunk(document.content) : null;
+    const passages = input.to === 'published' ? pageChunks(document.content) : null;
     if (input.to === 'published' && !passages.length) throw new HttpError(409, 'Add reviewed text before publishing.');
     check(await ctx.db.rpc('vexbot_set_status', { document: document.id, next: input.to, actor: ctx.user.id, passages }));
     await audit(ctx, `document.${input.to}`, document.id);
@@ -485,18 +534,49 @@ const ACTIONS = {
 export function createHandler({ getDatabase = database, getProvider = () => createProvider(), getScanner = () => createScanner(), getSetup = () => providerSetup() } = {}) {
   return async function handler(req, res) {
     res.setHeader('Cache-Control', 'no-store');
+    const started = performance.now();
+    const timings = {};
+    const controller = new AbortController();
+    let heartbeat;
+    const disconnected = () => { if (!res.writableEnded) controller.abort(); };
     try {
       method(req, ['POST']);
       const db = getDatabase();
       const { user, profile } = await authenticate(req, db);
+      timings.authentication = performance.now() - started;
       const token = claims(req);
-      const ctx = { db, user, profile, admin: profile.role === 'admin', iat: Number(token.iat) || 0, aal: token.aal, provider: getProvider(), scanner: getScanner(), setup: getSetup() };
+      const ctx = { db, user, profile, admin: profile.role === 'admin', iat: Number(token.iat) || 0, aal: token.aal, provider: getProvider(), scanner: getScanner(), setup: getSetup(), signal: AbortSignal.any([controller.signal, AbortSignal.timeout(55000)]), started, timings };
       const input = req.body && typeof req.body === 'object' ? req.body : {};
       const action = Object.hasOwn(ACTIONS, input.action) ? ACTIONS[input.action] : null;
       if (!action) throw new HttpError(400, 'Unknown action.');
-      return res.status(200).json(await action(ctx, input));
+      if (input.action === 'ask' && input.stream === true) {
+        res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+        res.setHeader('X-Accel-Buffering', 'no');
+        res.flushHeaders?.();
+        res.on?.('close', disconnected);
+        ctx.emit = (event, data) => { if (!res.destroyed && !res.writableEnded) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
+        ctx.emit('status', { stage: 'processing' });
+        heartbeat = setInterval(() => { if (!res.destroyed) res.write(': keepalive\n\n'); }, 10000);
+        const result = await action(ctx, input);
+        timings.total = performance.now() - started;
+        ctx.emit('result', { ...result, timings });
+        return res.end();
+      }
+      const result = await action(ctx, input);
+      if (input.action === 'ask') {
+        timings.total = performance.now() - started;
+        res.setHeader('Server-Timing', Object.entries(timings).map(([name, value]) => `${name};dur=${value.toFixed(1)}`).join(', '));
+      }
+      return res.status(200).json(result);
     } catch (error) {
+      if (res.headersSent) {
+        if (!res.destroyed && !res.writableEnded) { res.write(`event: error\ndata: ${JSON.stringify({ error: controller.signal.aborted ? 'Request cancelled.' : 'The reply was interrupted. Please try again.' })}\n\n`); res.end(); }
+        return;
+      }
       return respondError(res, error);
+    } finally {
+      clearInterval(heartbeat);
+      res.off?.('close', disconnected);
     }
   };
 }
@@ -531,9 +611,9 @@ export async function voiceContext(req, input, db = database()) {
     async history() { return selectHistory(await shown()); },
     async snapshot() { return { conversation, messages: await shown() }; },
     async lookup(question) {
-      const history = selectHistory(await shown());
-      const settings = await loadSettings(ctx);
-      const recent = (await shown()).filter(m => m.role === 'assistant' && !m.withdrawn).at(-1)?.citations ?? [];
+      const [messages, settings] = await Promise.all([shown(), loadSettings(ctx)]);
+      const history = selectHistory(messages);
+      const recent = messages.filter(m => m.role === 'assistant' && !m.withdrawn).at(-1)?.citations ?? [];
       const result = await plan(ctx, { workspace, question: requiredText(question, 'question', 2000), history, settings, attachments: [], recent: recent.map(c => ({ kind: c.kind, id: c.id })) });
       await refresh();
       return { ...result, history, fallback: noAnswerText(settings.business_profile ?? {}) };

@@ -110,7 +110,7 @@ test('Vexbot reads workspace files (local Supabase)', { skip: !local && 'Local S
     assert.ok(general.citations.some((c) => c.kind === 'file' && c.title === 'pike point.pdf'));
     const which = reply(await ask(tessToken, 'Summarize the document here'));
     assert.equal(which.outcome, 'no_answer');
-    assert.match(which.content, /Which file do you mean\? Files I can read here: .*“pike point\.pdf”/);
+    assert.match(which.content, /Which file do you mean: .*“pike point\.pdf”/);
   });
 
   await t.test('processing, unsupported, unreadable and empty files each say so, distinct from a service failure', async () => {
