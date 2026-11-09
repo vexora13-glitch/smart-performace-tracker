@@ -6,7 +6,8 @@ All future development for this project must use the existing canonical checkout
 - Branch: portal
 
 This applies to portal UI, VexBot, voice, backend, tests, documentation and tooling.
-Before editing or starting a server, verify the working directory and Git branch.
+Before editing, run node scripts/require-portal-checkout.mjs from the repository root.
+Both dev launch commands enforce the same check at startup.
 Do not develop in smart-performance-tracker-vexbot or another checkout. Do not switch
 to another branch or create another development branch or worktree unless the user
 explicitly requests it. An existing alternate worktree is not permission to use it.

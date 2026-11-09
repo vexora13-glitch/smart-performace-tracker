@@ -32,8 +32,9 @@ export function declaredFile(input) {
   const extension = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
   if (!name || !type) throw new HttpError(400, 'Choose a PDF, Word, Excel, PowerPoint, text, JPEG, PNG, MP4 or WebM file.');
   if (!type.ext.includes(extension)) throw new HttpError(400, 'The file name does not match its type.');
-  if (!Number.isInteger(input.size) || input.size <= 0 || input.size > MAX_UPLOAD_BYTES)
-    throw new HttpError(400, 'Files must be between 1 byte and 50 MB.');
+  const limit = input.mime === 'video/mp4' ? 2 * MAX_UPLOAD_BYTES : MAX_UPLOAD_BYTES;
+  if (!Number.isInteger(input.size) || input.size <= 0 || input.size > limit)
+    throw new HttpError(400, `Files must be between 1 byte and ${limit / (1024 * 1024)} MB.`);
   return { name, mime: input.mime, size: input.size, safeName: name.replace(/[^a-zA-Z0-9._-]/g, '_') };
 }
 

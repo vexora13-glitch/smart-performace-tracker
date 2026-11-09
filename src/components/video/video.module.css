@@ -1,0 +1,57 @@
+.player { min-width: 0; padding: 14px; border: 1px solid var(--vx-border); border-radius: 16px; background: #0a1019; }
+.playerHeading, .editorHeading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.playerHeading > span { color: var(--vx-text-2); font-size: .875rem; }
+.playerGrid { display: grid; gap: 14px; align-items: start; }
+.media { position: relative; min-width: 0; }
+.media video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #04070b; border-radius: 10px; }
+.waiting { position: absolute; inset: 12px auto auto 12px; background: #101620; padding: 5px 10px; border-radius: 6px; }
+.playbackError { margin: 10px 0; }
+.timeline { height: 62px; position: relative; margin: 6px 12px 0; }
+.timelineTrack, .timelineTrack span { height: 6px; border-radius: 5px; }
+.timelineTrack { position: absolute; inset: 19px 0 auto; background: #243348; pointer-events: none; }
+.timelineTrack span { position: absolute; top: 0; }
+.buffered { background: #637994; }
+.played { background: #93c5fd; left: 0; }
+.player input[type="range"] { position: absolute; cursor: pointer; appearance: none; height: 44px; width: 100%; margin: 0; padding: 0; border: 0; background: transparent; }
+.player input[type="range"]::-webkit-slider-thumb { appearance: none; background: #dbeafe; border-radius: 50%; width: 14px; height: 14px; }
+.player input[type="range"]::-moz-range-thumb { background: #dbeafe; border: 0; border-radius: 50%; width: 14px; height: 14px; }
+.timeline button.marker { position: absolute; top: 29px; width: 24px; height: 28px; min-height: 24px; padding: 0; transform: translateX(-50%); border: 0; background: transparent; box-shadow: none; }
+.marker::before { content: ""; display: block; margin: auto; width: 4px; height: 12px; border-radius: 4px; background: #899db7; }
+.marker[aria-current]::before, .marker:hover::before, .marker:focus-visible::before { background: #b6dcff; height: 17px; }
+.playbackTools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--vx-text-2); }
+.playbackTools > span { margin-right: auto; font-size: .875rem; font-variant-numeric: tabular-nums; }
+.chapterPanel { min-width: 0; }
+.chapterPanel ol { list-style: none; margin: 0; padding: 5px; display: grid; gap: 8px; }
+.chapterPanel button { width: 100%; display: flex; align-items: center; gap: 10px; text-align: left; padding: 8px; background: #111b28; box-shadow: none; border-color: #29384b; }
+.chapterPanel button[aria-current] { border-color: #93c5fd; background: #172d46; box-shadow: inset 3px 0 #93c5fd; }
+.thumbnail { width: 76px; aspect-ratio: 16 / 9; flex: 0 0 auto; overflow: hidden; display: grid; place-items: center; border-radius: 6px; color: #a8c8ec; background: #202e44; }
+.thumbnail img { width: 100%; height: 100%; object-fit: cover; }
+.chapterCopy { min-width: 0; display: grid; gap: 2px; line-height: 1.3; overflow-wrap: anywhere; }
+.chapterTime { color: #a9d4ff; font-size: .8rem; font-variant-numeric: tabular-nums; }
+.chapterCopy small { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.editor { margin: 12px 0; }
+.editor .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.meta { color: var(--vx-text-2); font-size: .8rem; }
+.editor label { min-width: 0; }
+.editor input { max-width: 100%; }
+.editor button, .player button, .player select { min-height: 44px; }
+.editor :focus-visible, .player :focus-visible { outline: 2px solid #93c5fd; outline-offset: 2px; }
+.editorHeading { margin-top: 14px; }
+.editorHeading h2, .editorHeading h3 { margin: 0; }
+.fields, .editRow { min-inline-size: 0; margin: 0; padding: 0; border: 0; display: grid; gap: 14px; }
+.editRow { padding: 14px; border: 1px solid var(--vx-border); border-radius: 12px; }
+.editRow legend { color: #dbeafe; padding: 0 6px; max-width: 100%; overflow-wrap: anywhere; }
+.editFields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr)); gap: 12px; }
+.editFields input { min-width: 0; }
+.thumbnailTools { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.thumbnailTools label { max-width: 100%; }
+.editor button.publish { background: #16385f; font-weight: 650; }
+.srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (min-width: 880px) {
+  .withChapters { grid-template-columns: minmax(0, 1fr) minmax(235px, 32%); }
+  .chapterPanel { max-height: 29rem; overflow: auto; overscroll-behavior: contain; }
+}
+@media (max-width: 480px) {
+  .player { padding: 9px; }
+  .thumbnail { width: 64px; }
+}

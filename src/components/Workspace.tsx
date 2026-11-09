@@ -1,5 +1,5 @@
 import { ASK_EVENT } from '../vexbot/Vexbot';
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { AnimatePresence, LayoutGroup, m, useReducedMotion } from 'motion/react';
 import { motionTokens } from '../design/motion-tokens';
 import {
@@ -36,6 +36,9 @@ import {
 } from '../services/portal';
 import type { Client, PortalData, PortalFile, Profile } from '../types/portal';
 
+const ClientVideo = lazy(() => import('./video/client-video'));
+const VideoChapterEditor = lazy(() => import('./video/video-chapter-editor'));
+
 // Shared files Vexbot can read the text of (the same types server/vexbot/files.mjs extracts).
 const READABLE = new Set([
   'application/pdf',
@@ -70,7 +73,7 @@ export function Workspace({
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const [publishing, setPublishing] = useState(false);
-  const [video, setVideo] = useState<{ url: string; name: string } | null>(null);
+  const [video, setVideo] = useState<{ url: string; file: PortalFile; edit: boolean } | null>(null);
   const videoDialog = useRef<HTMLDialogElement>(null);
   const [removing, setRemoving] = useState<PortalFile | null>(null);
   const removeDialog = useRef<HTMLDialogElement>(null);
@@ -166,11 +169,11 @@ export function Workspace({
       setBusy(false);
     }
   }
-  async function openFile(file: PortalFile, download = false) {
+  async function openFile(file: PortalFile, download = false, edit = false) {
     setError('');
     try {
       if (file.mime_type.startsWith('video/') && !download) {
-        setVideo({ url: await fileUrl(file), name: file.name });
+        setVideo({ url: await fileUrl(file), file, edit });
         videoDialog.current?.showModal();
       } else {
         // Download a private object into memory; no expiring URLs remain in browser history.
@@ -264,7 +267,7 @@ export function Workspace({
           </div>
           {admin && (
             <p className="file-hint">
-              PDF, Office, images, text, MP4 or WebM · up to 50 MB per file
+              MP4 up to 100 MB · PDF, Office, images, text and WebM up to 50 MB
             </p>
           )}
           <LayoutGroup id="file-categories">
@@ -345,6 +348,10 @@ export function Workspace({
                       >
                         <Play size={17} />
                       </button>
+                    )}
+                    {admin && ['video/mp4', 'video/webm'].includes(file.mime_type) && (
+                      <button type="button" className="secondary" onClick={() => openFile(file, false, true)}
+                        aria-label={`Manage video chapters for ${file.name}`}>Manage video chapters</button>
                     )}
                     {READABLE.has(file.mime_type) && (
                       <button
@@ -532,7 +539,7 @@ export function Workspace({
         onClose={() => setVideo(null)}
       >
         <div className="panel-heading">
-          <h2 id="video-title">{video?.name}</h2>
+          <h2 id="video-title">{video?.edit ? 'Manage video chapters' : video?.file.name}</h2>
           <button
             className="icon-button"
             aria-label="Close video"
@@ -542,14 +549,11 @@ export function Workspace({
           </button>
         </div>
         {video && (
-          <video
-            src={video.url}
-            controls
-            autoPlay
-            onError={() => setError('Video playback failed. Try downloading the video instead.')}
-          >
-            Your browser does not support this video. Please download it.
-          </video>
+          <Suspense fallback={<p role="status">Opening video…</p>}>
+            {video.edit
+              ? <VideoChapterEditor file={video.file} url={video.url} onClose={() => videoDialog.current?.close()} />
+              : <ClientVideo file={video.file} url={video.url} />}
+          </Suspense>
         )}
         <p>Playback links expire after one hour. Reopen the video to refresh.</p>
       </dialog>

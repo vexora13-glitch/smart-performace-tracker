@@ -1,3 +1,4 @@
+import './require-portal-checkout.mjs';
 import { createServer, loadEnv } from 'vite';
 import clients from '../api/clients.mjs';
 import notifications from '../api/notifications.mjs';

@@ -90,8 +90,9 @@ export const allowedTypes = [
 export async function uploadFile(workspace: string, file: File) {
   if (!allowedTypes.includes(file.type))
     throw new Error('Choose a PDF, Office document, image, text file, MP4 or WebM video.');
-  if (!file.size || file.size > 50 * 1024 * 1024)
-    throw new Error('Files must be between 1 byte and 50 MB.');
+  const limit = file.type === 'video/mp4' ? 100 : 50;
+  if (!file.size || file.size > limit * 1024 * 1024)
+    throw new Error(`Files must be between 1 byte and ${limit} MB.`);
   const name = file.name.slice(0, 240);
   const path = `${workspace}/${crypto.randomUUID()}/${name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
   unwrap(

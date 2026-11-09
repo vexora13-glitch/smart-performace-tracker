@@ -25,7 +25,7 @@ const TYPES: Record<string, string[]> = {
   'video/webm': ['webm'],
 };
 export const UPLOAD_ACCEPT = [...Object.keys(TYPES), ...Object.values(TYPES).flat().map((ext) => `.${ext}`)].join(',');
-export const UPLOAD_HINT = 'PDF, Word, Excel, PowerPoint, text, JPEG, PNG, MP4 or WebM · up to 50 MB';
+export const UPLOAD_HINT = 'PDF, Word, Excel, PowerPoint, text, JPEG, PNG, or WebM up to 50 MB · MP4 up to 100 MB';
 
 /** What each state really means, in the words shown to people. */
 export const UPLOAD_STATUS: Record<UploadState['status'], string> = {
@@ -51,7 +51,8 @@ function typeOf(file: File) {
 export async function uploadPrivate(file: File, purpose: 'workspace' | 'knowledge' | 'attachment', workspaceId: string | null): Promise<UploadState> {
   const mime = typeOf(file);
   if (!mime) throw new Error(`Choose a supported file: ${UPLOAD_HINT}.`);
-  if (!file.size || file.size > 50 * 1024 * 1024) throw new Error('Files must be between 1 byte and 50 MB.');
+  const limit = mime === 'video/mp4' ? 100 : 50;
+  if (!file.size || file.size > limit * 1024 * 1024) throw new Error(`Files must be between 1 byte and ${limit} MB.`);
   const created = await api('vexbot', { action: 'upload_create', purpose, workspace_id: workspaceId, name: file.name, mime, size: file.size });
   unwrap(await db().storage.from('vexbot-private').uploadToSignedUrl(created.path, created.token, file, { contentType: mime }));
   return (await api('vexbot', { action: 'upload_complete', upload_id: created.upload_id })).upload as UploadState;
