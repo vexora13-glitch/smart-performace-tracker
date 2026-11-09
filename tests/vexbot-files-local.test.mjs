@@ -115,10 +115,11 @@ test('Vexbot reads workspace files (local Supabase)', { skip: !local && 'Local S
 
   await t.test('processing, unsupported, unreadable and empty files each say so, distinct from a service failure', async () => {
     assert.match(reply(await ask(tessToken, 'What happens in scene01.mp4?')).content, /“scene01\.mp4” is a video I can't read/);
-    assert.match(reply(await ask(tessToken, 'Summarize broken.pdf')).content, /couldn't open “broken\.pdf”.*damaged/);
+    assert.match(reply(await ask(tessToken, 'Summarize broken.pdf')).content, /couldn't open “broken\.pdf”.*declared file type/);
     assert.match(reply(await ask(tessToken, 'Summarize scanned letter.pdf')).content, /couldn't find any readable text in “scanned letter\.pdf”/);
     const big = await share(tess.id, 'big report.pdf', 'application/pdf', pdf([['Big report']]));
-    ok(await service.from('vexbot_file_text').insert({ file_id: big.id, workspace_id: tess.id, size_bytes: big.size_bytes, status: 'processing' }), 'processing');
+    await ask(tessToken, 'Summarize big report.pdf');
+    ok(await service.from('vexbot_file_text').update({ status: 'processing', content: '', updated_at: new Date().toISOString() }).eq('file_id', big.id), 'processing');
     const processing = reply(await ask(tessToken, 'Summarize big report.pdf'));
     assert.equal(processing.outcome, 'no_answer');
     assert.match(processing.content, /“big report\.pdf” is still being processed/);

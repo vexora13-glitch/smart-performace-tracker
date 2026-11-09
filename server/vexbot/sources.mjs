@@ -13,6 +13,7 @@ const SHARED_BUCKET = 'portal-private';
 /** Characters of whole-file text given to the model for one answer, split across the files asked about. */
 export const FILE_BUDGET = 200_000;
 const PROCESSING_STALE_MS = 3 * 60_000;
+const FAILURE_RETRY_MS = 30_000;
 const EXTRACT_WAIT_MS = 25_000;
 const SEARCH_EXTRACT_FILES = 2;
 const SEARCH_EXTRACT_BYTES = 5 * 1024 * 1024;
@@ -141,7 +142,9 @@ export function resolve(question, inv, { attachments = [], recent = [] } = {}) {
 // ---- Reading a file's contents ------------------------------------------------------------------------------
 // Fallback cache for a deployment whose database does not have vexbot_file_text yet. Bounded.
 const memory = new Map();
-const fingerprint = file => `index-v2:${createHash('sha256').update(JSON.stringify([file.id, file.workspace_id, file.path, file.size, file.mime, file.version])).digest('hex')}`;
+const inFlight = new Map();
+// A parser revision also invalidates failures produced by the old serverless worker loader.
+const fingerprint = file => `index-v3:${createHash('sha256').update(JSON.stringify([file.id, file.workspace_id, file.path, file.size, file.mime, file.version])).digest('hex')}`;
 const memoryKey = (db, file) => `${db.supabaseUrl}:${file.workspace_id}:${file.id}:${fingerprint(file)}`;
 function remember(key, row) {
   memory.delete(key);
@@ -156,12 +159,27 @@ async function store(db, row, key) {
 async function extractShared(db, file) {
   if (file.size > MAX_EXTRACT_BYTES) return { status: 'too_large', content: '' };
   const { data, error } = await db.storage.from(SHARED_BUCKET).download(file.path);
-  if (error || !data) return { status: 'failed', content: '', note: 'The file could not be opened from storage.' };
+  if (error || !data) {
+    const status = Number(error?.statusCode ?? error?.status);
+    return failure(file, 'storage', status === 404 ? 'storage_not_found' : [401, 403].includes(status) ? 'storage_denied' : 'storage_unavailable', status);
+  }
   const bytes = Buffer.from(await data.arrayBuffer());
+  if (bytes.length > MAX_EXTRACT_BYTES) return { status: 'too_large', content: '' };
+  if (bytes.length !== file.size) return failure(file, 'download', 'size_mismatch');
   const problem = sniff(bytes, file.mime);
-  if (problem) return { status: 'failed', content: '', note: problem };
-  const { text, note } = await extractText(bytes, file.mime);
+  if (problem) return failure(file, 'signature', 'type_mismatch');
+  let result;
+  try { result = await extractText(bytes, file.mime); }
+  catch (error) {
+    return failure(file, 'extraction', error?.name === 'PasswordException' ? 'pdf_password' : error?.name === 'InvalidPDFException' ? 'pdf_invalid' : 'extraction_unavailable');
+  }
+  const { text, note } = result;
   return text ? { status: 'ready', content: note && /truncat/i.test(note) ? `${text.slice(0, 199940)}\n\n[The file continues beyond this point.]` : text, note } : { status: 'empty', content: '' };
+}
+function failure(file, stage, code, httpStatus) {
+  // Do not log object paths, signed URLs, tokens, PDF content or raw SDK/parser messages.
+  console.warn('[vexbot:file]', JSON.stringify({ file_id: file.id, workspace_id: file.workspace_id, stage, code, ...(Number.isFinite(httpStatus) ? { http_status: httpStatus } : {}) }));
+  return { status: 'failed', content: '', note: code };
 }
 const later = (ms) => {
   let timer;
@@ -179,22 +197,29 @@ export async function sharedText(db, file, { wait = EXTRACT_WAIT_MS } = {}) {
   if (cached.error && !missingTable(cached.error)) throw new Error('Database operation failed');
   const key = memoryKey(db, file);
   const hit = cached.error ? memory.get(key) : cached.data;
-  if (hit && hit.workspace_id === file.workspace_id && Number(hit.size_bytes) === file.size) {
+  const pending = inFlight.get(key);
+  if (pending) {
+    const timer = later(wait);
+    try { return await Promise.race([pending, timer.promise]) ?? { status: 'processing', content: '' }; }
+    finally { timer.cancel(); }
+  }
+  if (hit && hit.workspace_id === file.workspace_id && Number(hit.size_bytes) === file.size && hit.note?.startsWith(fingerprint(file))) {
     if (hit.status === 'processing' && Date.now() - Date.parse(hit.updated_at) < PROCESSING_STALE_MS) return hit;
-    if (hit.status !== 'processing' && hit.note?.startsWith(fingerprint(file)) && Date.now() - Date.parse(hit.updated_at) < 24 * 3600_000) return hit;
+    if (hit.status !== 'processing' && Date.now() - Date.parse(hit.updated_at) < (hit.status === 'failed' ? FAILURE_RETRY_MS : 24 * 3600_000)) return hit;
   }
   const base = { file_id: file.id, workspace_id: file.workspace_id, size_bytes: file.size, content: '', note: null };
-  await store(db, { ...base, note: fingerprint(file), status: 'processing', updated_at: new Date().toISOString() }, key);
-  const work = extractShared(db, file)
-    .catch(() => ({ status: 'failed', content: '', note: 'Text extraction failed.' }))
+  const work = store(db, { ...base, note: fingerprint(file), status: 'processing', updated_at: new Date().toISOString() }, key)
+    .then(() => extractShared(db, file))
+    .catch(() => failure(file, 'retrieval', 'extraction_unavailable'))
     .then(async (result) => {
       const row = { ...base, ...result, note: `${fingerprint(file)} ${result.note ?? ''}`.slice(0, 300), content: result.content.slice(0, 200000), updated_at: new Date().toISOString() };
       await store(db, row, key).catch(() => {});
       return row;
-    });
-  const timer = later(wait);
-  const done = await Promise.race([work, timer.promise]);
-  timer.cancel();
+    }).finally(() => inFlight.delete(key));
+  inFlight.set(key, work);
+  const waiting = later(wait);
+  const done = await Promise.race([work, waiting.promise]);
+  waiting.cancel();
   return done ?? { ...base, status: 'processing' };
 }
 
@@ -219,7 +244,15 @@ export function problemText(item, state) {
     case 'empty': return `I couldn't find any readable text in ${name}. It may be a scanned image or a document without a text layer.`;
     case 'too_large': return `${name} is larger than the 20 MB I can read automatically.`;
     case 'upload': return `${uploadState(item)} ${UPLOAD_RULE}`;
-    default: return `I couldn't open ${name} to read it. It may be damaged or not match its file type.`;
+    default: {
+      const code = state.note?.split(' ').at(-1);
+      if (code === 'pdf_password') return `${name} requires a PDF password. Ask the Vexora team for an unlocked copy to use with VexBot.`;
+      if (code === 'pdf_invalid' || code === 'type_mismatch') return `I couldn't open ${name}: its downloaded contents could not be parsed as the declared file type. Ask the Vexora team to check the original file.`;
+      if (code === 'storage_not_found') return `I found ${name} in your workspace, but its stored file is missing. Ask the Vexora team to check the upload.`;
+      if (code === 'storage_denied') return `I found ${name}, but secure storage denied access to its contents. Ask the Vexora team to check its storage permissions.`;
+      if (code === 'size_mismatch') return `The downloaded size of ${name} doesn't match its workspace record. Ask the Vexora team to check the upload.`;
+      return `I found ${name}, but the document service couldn't read its contents just now. Please try again shortly.`;
+    }
   }
 }
 

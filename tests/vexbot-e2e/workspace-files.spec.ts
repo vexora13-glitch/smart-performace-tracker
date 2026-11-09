@@ -44,6 +44,7 @@ test('Test workspace: text answer from the shared PDF, with its citation', async
   await page.getByLabel('Ask Vexbot about pike point.pdf').click();
   await expect(page.getByTestId('vexbot-panel')).toBeVisible();
   await expect(page.getByTestId('vexbot-input')).toHaveValue('Summarize “pike point.pdf”');
+  await expect(page.getByTestId('vexbot-send')).toBeEnabled();
   await page.keyboard.press('Enter');
   let answer = page.getByTestId('vexbot-assistant').last();
   await expect(answer).toHaveAttribute('data-outcome', 'answered');
@@ -54,6 +55,7 @@ test('Test workspace: text answer from the shared PDF, with its citation', async
   // The exact acceptance question, in a new conversation.
   await page.getByTestId('vexbot-new').click();
   await page.getByTestId('vexbot-input').fill('Summarize `pike point.pdf`');
+  await expect(page.getByTestId('vexbot-send')).toBeEnabled();
   await page.keyboard.press('Enter');
   answer = page.getByTestId('vexbot-assistant').last();
   await expect(answer).toContainText('2.4 km coastal walkway');
@@ -64,6 +66,7 @@ test('Test workspace: text answer from the shared PDF, with its citation', async
 
   // Another shared file, a plain text file, is read the same way.
   await page.getByTestId('vexbot-input').fill('Summarize part-one.txt');
+  await expect(page.getByTestId('vexbot-send')).toBeEnabled();
   await page.keyboard.press('Enter');
   await expect(page.getByTestId('vexbot-assistant').last()).toContainText('five staff members');
   expect(errors).toEqual([]);
@@ -73,7 +76,7 @@ test('natural proposal recognition, pricing follow-up and SOW selection through 
   test.skip(isMobile, 'desktop only');
   const errors = await login(page);
   await page.getByTestId('vexbot-launcher').click();
-  await page.getByTestId('vexbot-input').fill('Can you summarise the proposal in a few minutes?');
+  await page.getByTestId('vexbot-input').fill('Can you open the proposal here and summarize it for me?');
   const response = page.waitForResponse(response => response.url().endsWith('/api/vexbot') && response.request().postDataJSON()?.action === 'ask');
   await page.getByTestId('vexbot-send').click();
   expect((await response).headers()['content-type']).toContain('text/event-stream');

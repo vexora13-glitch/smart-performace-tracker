@@ -16,7 +16,7 @@
 .thumbnailTools label { max-width: 100%; }
 .editor button.publish { background: #16385f; font-weight: 650; }
 .srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.player { min-width: 0; color: var(--vx-text); }
+.player { min-width: 0; color: var(--vx-text); container: vexora-video / inline-size; }
 .playerHeading { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; min-width: 0; }
 .headingCopy { min-width: 0; flex: 1; }
 .headingCopy h2 { margin: 0; font-size: 18px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -67,21 +67,22 @@
 .chapterHeader > span { font-size: 12px; color: var(--vx-text-2); font-variant-numeric: tabular-nums; }
 .chapterPanel ol { list-style: none; margin: 0; padding: 4px; max-height: 36rem; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
 .chapterPanel li + li { border-top: 1px solid #24344a; }
-.chapterPanel button { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 76px; padding: 12px 10px; border: 1px solid transparent; border-radius: 7px; background: transparent; box-shadow: none; color: var(--vx-text); text-align: left; }
+.chapterPanel button { display: flex; justify-content: flex-start; align-items: center; gap: 8px; width: 100%; min-height: 64px; padding: 10px; border: 1px solid transparent; border-radius: 7px; background: transparent; box-shadow: none; color: var(--vx-text); text-align: left; }
 .chapterPanel button:hover { background: #889bb912; }
 .chapterPanel button[aria-current] { border-color: #9c7bdf55; background: #8d66cc1c; box-shadow: inset 3px 0 #b18ce6; }
-.chapterNumber { flex: 0 0 18px; font-size: 12px; color: var(--vx-text-2); text-align: center; font-variant-numeric: tabular-nums; }
-.thumbnail { width: 64px; aspect-ratio: 16 / 9; flex: none; display: grid; place-items: center; overflow: hidden; border-radius: 5px; background: #1d2d45; color: #91a5c7; }
+.chapterNumber { flex: 0 0 16px; font-size: 12px; color: var(--vx-text-2); text-align: center; font-variant-numeric: tabular-nums; }
+.thumbnail { width: 44px; aspect-ratio: 16 / 9; flex: none; display: grid; place-items: center; overflow: hidden; border-radius: 5px; background: #1d2d45; color: #91a5c7; }
 .thumbnail img { width: 100%; height: 100%; object-fit: cover; }
-.chapterCopy { display: grid; flex: 1; min-width: 0; gap: 4px; overflow-wrap: normal; word-break: normal; hyphens: none; }
-.chapterCopy strong { font-size: 14px; font-weight: 500; line-height: 1.4; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
-.chapterTime { font-size: 12px; font-weight: 400; color: var(--vx-text-2); font-variant-numeric: tabular-nums; }
+.chapterCopy { flex: 1; min-width: 0; overflow-wrap: normal; word-break: normal; hyphens: none; }
+.chapterCopy strong { display: block; min-width: 0; font-size: 14px; font-weight: 500; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; word-break: normal; }
+.chapterTime { flex: none; margin-left: auto; white-space: nowrap; font-size: 12px; font-weight: 400; color: var(--vx-text-2); font-variant-numeric: tabular-nums; }
 .information { margin-top: 10px; font-size: 12px; color: var(--vx-text-2); }
 .information summary { cursor: pointer; padding: 6px 0; }
 .information p { max-width: 80ch; }
 .waiting { position: absolute; z-index: 3; inset: 12px auto auto 12px; padding: 6px 10px; border: 1px solid var(--vx-border); border-radius: 6px; background: #101e32ee; font-size: 13px; }
 .playbackError { padding: 10px 16px; }
-.immersive, .player:fullscreen { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+.immersive, .player:fullscreen { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.player:fullscreen { height: 100%; }
 .immersive .playerGrid, .player:fullscreen .playerGrid { flex: 1; }
 .immersive .media video, .player:fullscreen .media video { flex: 1; width: 100%; height: 0; }
 .immersive .chapterPanel ol, .player:fullscreen .chapterPanel ol { flex: 1; max-height: none; }
@@ -92,8 +93,10 @@
 .editor .chapterPanel ol { max-height: 18rem; }
 .editor .information { display: none; }
 .editor button.publish { background: var(--vx-nav-gradient); }
-@media (min-width: 1024px) { .withChapters { grid-template-columns: minmax(0, 2.8fr) minmax(310px, 1fr); } }
-@media (max-width: 1023px) {
+/* Size by the player itself: the portal navigation can make an inline player much narrower than
+   the viewport. A viewport media query would incorrectly keep its chapters alongside a tiny video. */
+@container vexora-video (min-width: 1100px) { .withChapters { grid-template-columns: minmax(0, 2fr) minmax(380px, 1fr); } }
+@container vexora-video (max-width: 1099.99px) {
   .immersive .playerGrid, .player:fullscreen .playerGrid { grid-template-rows: auto minmax(0, 1fr); }
   .immersive .media video, .player:fullscreen .media video { height: auto; flex: none; max-height: 51dvh; }
   .immersive .playerGrid:not(.withChapters), .player:fullscreen .playerGrid:not(.withChapters) { grid-template-rows: minmax(0, 1fr); }

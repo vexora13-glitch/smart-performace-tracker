@@ -879,9 +879,10 @@ dialog .panel-heading h2 {
   background: #080f1e;
   padding: 16px;
 }
-.video-viewer-dialog { height: 98dvh; overflow: hidden; }
-.video-viewer-dialog[open] { display: flex; flex-direction: column; }
-.video-viewer-dialog > section { flex: 1; }
+/* The viewer owns its viewport dimensions, independently of general dialog/editor defaults. */
+dialog.video-viewer-dialog { width: 98vw; height: 96dvh; max-width: none; max-height: 96dvh; min-width: 0; overflow: hidden; margin: auto; }
+dialog.video-viewer-dialog[open] { display: flex; flex-direction: column; }
+.video-viewer-dialog > section { flex: 1; min-height: 0; }
 .video-editor-dialog { max-width: min(1200px, 98vw); }
 .video-dialog:fullscreen { max-width: 100vw; max-height: 100dvh; }
 @media (max-width: 560px) {

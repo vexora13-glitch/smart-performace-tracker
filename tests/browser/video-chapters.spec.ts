@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { CLIENT, fixture } from '../helpers/portal-fixture';
 
 const video = {
@@ -44,24 +44,60 @@ async function media(page: Page, snapshots: Snapshot[], canEdit: boolean) {
   });
 }
 
-for (const [width, height] of [[1920, 1080], [1440, 900], [1366, 768], [768, 1024], [390, 844]]) {
+for (const [width, height] of [[1920, 1080], [1440, 900], [1366, 768], [1024, 768], [768, 1024], [390, 844]]) {
   test(`presentation workspace at ${width}x${height}`, async ({ page }) => {
     await page.setViewportSize({ width, height });
     const member = await fixture(page, 'client');
     member.state.portal_files.push(video);
+    const readableTitles = ['Opening', 'Project Objectives', 'Solution & Key Features', 'Scope of Work', 'Delivery Approach', 'Investment & Timeline', 'Next Steps'];
     await media(page, [{ state: 'published', revision: 1, chapters: Array.from({ length: 18 }, (_, index) => ({
-      id: `chapter-${index}`, title: index ? `Deliverables, responsibilities and implementation milestones ${index}` : 'Opening', start: index ? 3 + index / 100 : 0,
+      id: `chapter-${index}`, title: readableTitles[index] ?? `Deliverables, responsibilities and implementation milestones ${index}`, start: index ? 3 + index / 100 : 0,
     })) }], false);
     await page.reload();
     await page.getByRole('button', { name: 'Play Demo.webm' }).click();
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByRole('navigation', { name: 'Video chapters' })).toBeVisible();
     await expect.poll(() => dialog.locator('video').evaluate((v: HTMLVideoElement) => v.readyState)).toBeGreaterThanOrEqual(1);
+    await expect.poll(async () => Math.round((await dialog.boundingBox())!.height)).toBe(Math.round(height * .96));
+    await dialog.locator('video').evaluate((v: HTMLVideoElement) => { v.pause(); v.currentTime = 2; });
     await page.screenshot({ path: `artifacts/screenshots/video-${process.env.VIDEO_BASELINE ? 'before' : 'after'}-${width}.png` });
     if (process.env.VIDEO_BASELINE) return;
     const box = await dialog.boundingBox();
     expect(box!.width).toBeGreaterThan(width * .95);
     expect(box!.height).toBeGreaterThan(height * .95);
+    const geometry = await dialog.evaluate(node => {
+      const nav = node.querySelector('nav')!;
+      const list = nav.querySelector('ol')!;
+      const video = node.querySelector('video')!;
+      const bounds = (element: Element) => { const r = element.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; };
+      return { dialog: bounds(node), video: bounds(video), sidebar: bounds(nav), modalScrolls: node.scrollHeight > node.clientHeight + 1,
+        chapterScrolls: list.scrollHeight > list.clientHeight,
+        contain: getComputedStyle(video).objectFit,
+        rows: Array.from(nav.querySelectorAll('li button')).map(button => {
+          const title = button.querySelector('strong')!, time = button.lastElementChild!;
+          return { title: bounds(title), row: bounds(button), timestamp: bounds(time), lineHeight: parseFloat(getComputedStyle(title).lineHeight), whiteSpace: getComputedStyle(title).whiteSpace, fullName: button.getAttribute('aria-label'), tooltip: button.getAttribute('title') };
+        }) };
+    });
+    await writeFile(`artifacts/screenshots/video-geometry-${width}.json`, JSON.stringify(geometry, null, 2));
+    expect(geometry.modalScrolls).toBe(false);
+    expect(geometry.chapterScrolls).toBe(true);
+    expect(geometry.contain).toBe('contain');
+    if (width >= 1200) {
+      expect(geometry.sidebar.width).toBeGreaterThanOrEqual(380);
+      expect(geometry.video.width).toBeGreaterThan(width * .59);
+      expect(geometry.sidebar.x).toBeGreaterThan(geometry.video.x + geometry.video.width);
+    } else expect(geometry.sidebar.y).toBeGreaterThan(geometry.video.y + geometry.video.height);
+    for (const row of geometry.rows) {
+      expect(row.whiteSpace).toBe('nowrap');
+      expect(row.title.height).toBeLessThanOrEqual(row.lineHeight + 1);
+      expect(row.timestamp.x).toBeGreaterThanOrEqual(row.title.x + row.title.width);
+      expect(row.timestamp.x + row.timestamp.width).toBeLessThanOrEqual(row.row.x + row.row.width);
+      expect(row.fullName).toContain(row.tooltip!.split(' — ')[0]);
+    }
+    const firstChapter = dialog.getByRole('navigation', { name: 'Video chapters' }).getByRole('button').first();
+    await firstChapter.focus();
+    await expect(firstChapter).toHaveAccessibleName('Chapter 1: Opening, 0:00');
+    await expect(firstChapter).toHaveAttribute('title', 'Opening');
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
     const element = dialog.locator('video');
     await expect.poll(() => element.evaluate((v: HTMLVideoElement) => v.readyState)).toBeGreaterThanOrEqual(1);

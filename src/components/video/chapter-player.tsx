@@ -17,11 +17,12 @@ const ChapterList = memo(function ChapterList({ chapters, current, seek, id, dur
     <div className={styles.chapterHeader}><h2><Layers /> Video Chapters</h2><span>{formatVideoTime(duration)}</span></div>
     <ol>
       {chapters.map((chapter, index) => <li key={chapter.id}>
-        <button type="button" aria-current={current === chapter.id ? 'true' : undefined} onClick={() => seek(chapter.start)}
+        <button type="button" aria-label={`Chapter ${index + 1}: ${chapter.title}, ${formatVideoTime(chapter.start)}`} aria-current={current === chapter.id ? 'true' : undefined} onClick={() => seek(chapter.start)}
           title={[chapter.title, chapter.description].filter(Boolean).join(' — ')}>
           <span className={styles.chapterNumber}>{index + 1}</span>
           <ChapterThumbnail url={chapter.thumbnailUrl} />
-          <span className={styles.chapterCopy}><strong>{chapter.title}</strong><span className={styles.chapterTime}>{formatVideoTime(chapter.start)}</span></span>
+          <span className={styles.chapterCopy}><strong>{chapter.title}</strong></span>
+          <span className={styles.chapterTime}>{formatVideoTime(chapter.start)}</span>
         </button>
       </li>)}
     </ol>

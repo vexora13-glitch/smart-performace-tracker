@@ -7,7 +7,7 @@ test('staff primary navigation uses original pages and authentic logo within the
   const nav = page.getByRole('navigation', { name: 'Main navigation' });
   await expect(nav.getByRole('button')).toHaveText(['Dashboard', 'Clients', /Messages/, 'Documents', 'Videos', 'VexBot']);
   await expect(page.locator('.sidebar .brand-logo')).toHaveAttribute('src', '/brand/vexora-logo.png');
-  expect(await page.locator('.sidebar .brand-logo').evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
+  await expect.poll(() => page.locator('.sidebar .brand-logo').evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
   await expect(page.getByRole('heading', { name: 'Welcome back, Allan.' })).toBeVisible();
   await nav.getByRole('button', { name: 'Clients', exact: true }).click();
   await expect(page.getByLabel('Search clients')).toBeVisible();

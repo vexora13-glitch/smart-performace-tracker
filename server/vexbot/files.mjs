@@ -117,13 +117,24 @@ const decodeXml = (text) => text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (match
 const xmlText = (xml, paragraph, run) => decodeXml(xml.split(paragraph).map((part) => [...part.matchAll(run)].map((m) => m[1]).join('')).filter(Boolean).join('\n'));
 
 let pdfjs;
+async function pdfRuntime() {
+  // PDF.js normally imports a sibling worker through a computed URL. Serverless file tracers cannot
+  // reliably discover it. Import both modules literally; the worker registers its in-process handler.
+  // Keep this lazy and shared, and allow initialisation to recover from a transient module failure.
+  pdfjs ??= Promise.all([
+    import('pdfjs-dist/legacy/build/pdf.worker.mjs'),
+    import('pdfjs-dist/legacy/build/pdf.mjs'),
+  ]).then(([, api]) => api).catch(error => { pdfjs = undefined; throw error; });
+  return pdfjs;
+}
 async function pdfText(bytes) {
-  pdfjs ??= await import('pdfjs-dist/legacy/build/pdf.mjs');
-  const task = pdfjs.getDocument({ data: new Uint8Array(bytes), isEvalSupported: false, useSystemFonts: false, verbosity: 0 });
-  const document = await task.promise;
-  const pageCount = document.numPages;
+  const api = await pdfRuntime();
+  const task = api.getDocument({ data: new Uint8Array(bytes), isEvalSupported: false, useSystemFonts: false, verbosity: 0 });
   const pages = [];
+  let pageCount;
   try {
+    const document = await task.promise;
+    pageCount = document.numPages;
     for (let number = 1; number <= Math.min(document.numPages, 300); number++) {
       const page = await document.getPage(number);
       const content = await page.getTextContent();

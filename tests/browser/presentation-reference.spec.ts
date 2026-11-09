@@ -98,6 +98,14 @@ test('reference presentation: real media controls, chapters, sidebar and respons
       await expect.poll(() => page.getByTestId('vexbot').getAttribute('data-ppm').then(value => Number(value))).toBeLessThan(40);
     }
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    const layout = await video.evaluate(element => {
+      const player = element.closest('section')!;
+      const nav = player.querySelector('nav')!;
+      return { width: player.clientWidth, videoBottom: element.getBoundingClientRect().bottom, chapterTop: nav.getBoundingClientRect().top,
+        singleLine: Array.from(nav.querySelectorAll('strong')).every(title => getComputedStyle(title).whiteSpace === 'nowrap' && title.getBoundingClientRect().height <= parseFloat(getComputedStyle(title).lineHeight) + 1) };
+    });
+    expect(layout.singleLine).toBe(true);
+    if (layout.width < 1100) expect(layout.chapterTop).toBeGreaterThan(layout.videoBottom);
     const fullscreenBox = await page.getByRole('button', { name: 'Enter fullscreen' }).boundingBox();
     const mediaBox = await video.locator('..').boundingBox();
     expect(fullscreenBox!.x + fullscreenBox!.width).toBeLessThanOrEqual(mediaBox!.x + mediaBox!.width);

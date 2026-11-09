@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createClient } from '@supabase/supabase-js';
 import { loadEnv } from 'vite';
 import { createHandler } from '../server/vexbot/handler.mjs';
@@ -58,6 +58,37 @@ test('streaming HTTP route, workspace intelligence, concurrent customers and can
     assert.equal(frames[0].event, 'status');
     return frames;
   };
+  if (process.env.VEXBOT_REPAIR_PDF) await t.test('actual proposal copy: stale failed cache recovers and the exact customer question is cited', async () => {
+    const bytes = await readFile(process.env.VEXBOT_REPAIR_PDF);
+    const name = 'Customer_Proposal.pdf', path = `${users[0].id}/${randomUUID()}/${name}`;
+    ok(await db.storage.from('portal-private').upload(path, bytes, { contentType: 'application/pdf' }));
+    const file = ok(await db.from('portal_files').insert({ workspace_id: users[0].id, path, name, mime_type: 'application/pdf', size_bytes: bytes.length }).select('*').single()); files.push(file);
+    // Remove the synthetic proposal from the catalogue for this one request, without touching Storage.
+    const synthetic = files.find(row => row.workspace_id === users[0].id && row.name.startsWith('Vexora_'));
+    ok(await db.from('portal_files').update({ name: 'Synthetic_Booking_Notes.pdf' }).eq('id', synthetic.id));
+    try {
+      ok(await db.from('vexbot_file_text').insert({ file_id: file.id, workspace_id: users[0].id, size_bytes: bytes.length, status: 'failed', note: 'index-v2:old Text extraction failed.' }));
+      const { extractText } = await import('../server/vexbot/files.mjs');
+      const extracted = await extractText(bytes, 'application/pdf');
+      assert.ok(extracted.text.length > 1000);
+      let receivedSource;
+      const actual = process.env.VEXBOT_REPAIR_LIVE === '1' ? createProvider(loadEnv('development', process.cwd(), '')) : createProvider({ VEXBOT_PROVIDER: 'mock' });
+      assert.ok(actual, 'answer provider is configured');
+      provider = { ...actual, async answer(input) { receivedSource = input.sources.find(source => source.file_id === file.id); return actual.answer(input); } };
+      const result = (await stream(users[0], { question: 'Can you open the proposal here and summarize it for me?' })).at(-1);
+      assert.equal(result.event, 'result');
+      assert.equal(result.messages[1].outcome, 'answered');
+      assert.equal(receivedSource.content, extracted.text, 'all extracted pages reach the answer provider');
+      assert.ok(result.messages[1].citations.some(citation => citation.id === file.id));
+      const cached = ok(await db.from('vexbot_file_text').select('status,note,content').eq('file_id', file.id).single());
+      assert.equal(cached.status, 'ready'); assert.match(cached.note, /^index-v3:/);
+      await writeFile('artifacts/pdf-diagnosis/local-route-result.json', JSON.stringify({ provider: actual.name, sourceCharacters: receivedSource.content.length, pages: (receivedSource.content.match(/\[Page /g) || []).length, answer: result.messages[1] }, null, 2));
+    } finally {
+      provider = createProvider({ VEXBOT_PROVIDER: 'mock' });
+      ok(await db.from('portal_files').update({ name: synthetic.name }).eq('id', synthetic.id));
+      ok(await db.from('portal_files').update({ name: 'Customer_Reference.pdf' }).eq('id', file.id));
+    }
+  });
   await t.test('natural summary, citations, follow-up and cross-workspace isolation over HTTP', async () => {
     const results = await Promise.all(users.map(user => stream(user)));
     for (let index = 0; index < results.length; index++) {

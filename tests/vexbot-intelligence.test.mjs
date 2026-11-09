@@ -97,3 +97,23 @@ test('cached extraction revalidates workspace, version fingerprint and changed p
   await sharedText(db, { ...item, workspace_id: 'workspace-b' });
   assert.equal(downloads, 3);
 });
+
+test('storage failures remain distinct, retry after backoff and deduplicate concurrent downloads', async () => {
+  let cached, attempts = 0, denied = true;
+  const messages = [], warn = console.warn;
+  console.warn = (...parts) => messages.push(parts.join(' '));
+  try {
+    const db = { supabaseUrl: 'http://localhost', from() { return { select() { return this; }, eq() { return this; }, async maybeSingle() { return { data: cached }; }, async upsert(row) { cached = row; return {}; } }; }, storage: { from() { return { async download() { attempts++; return denied ? { error: { statusCode: '403', message: 'DO_NOT_LOG_PRIVATE_URL_OR_TOKEN' } } : { data: new Blob(['recovered text']) }; } }; } } };
+    const item = { ...file('retry', 'Proposal.txt', 'text/plain'), path: 'workspace-a/private-path', size: 14, version: 'v1' };
+    const failed = await sharedText(db, item);
+    assert.equal(failed.status, 'failed'); assert.match(failed.note, /storage_denied$/);
+    await sharedText(db, item); assert.equal(attempts, 1, 'backoff prevents repeated failed downloads');
+    assert.doesNotMatch(messages.join('\n'), /DO_NOT_LOG|private-path/);
+    denied = false; cached.updated_at = new Date(Date.now() - 31_000).toISOString();
+    const recovered = await Promise.all([sharedText(db, item), sharedText(db, item)]);
+    assert.ok(recovered.every(row => row.status === 'ready' && row.content === 'recovered text'));
+    assert.equal(attempts, 2);
+    cached = { ...cached, status: 'failed', note: 'index-v2:old Text extraction failed.', updated_at: new Date().toISOString() };
+    assert.equal((await sharedText(db, item)).status, 'ready', 'old parser failure is immediately invalidated');
+  } finally { console.warn = warn; }
+});
