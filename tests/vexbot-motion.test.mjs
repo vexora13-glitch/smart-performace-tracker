@@ -13,7 +13,7 @@ import { chooseDock, freeColumns, isClear, overlaps, silhouette } from "../src/v
 
 const bytes = await readFile("public/bot/vexora-bot.glb");
 const loadBot = () => new Promise((resolve, reject) => new GLTFLoader().parse(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength), "", resolve, reject));
-const REQUIRED = ["Idle", "Walk", "TurnLeft", "TurnRight", "Wave", "SitDown", "SeatedIdle", "StandUp", "Listen", "Think", "Speak"];
+const REQUIRED = ["Idle", "Walk", "TurnLeft", "TurnRight", "Wave", "SitDown", "SeatedIdle", "StandUp", "Listen", "Think", "Speak", "Present"];
 const world = (scene, name) => { scene.updateMatrixWorld(true); return new THREE.Vector3().setFromMatrixPosition(scene.getObjectByName(name).matrixWorld); };
 
 test("the GLB is the website's exact file", () => {
@@ -619,4 +619,14 @@ test("portal: only the two glow materials turn purple; metal, polymer and visor 
     if (m.name === "LimeGlow" || m.name === "EyeGlow") assert.equal(`#${m.emissive.getHexString()}`, BOT_ACCENT.emissive);
     else assert.equal(m.color.getHexString(), before[m.name], m.name);
   });
+});
+
+
+test("all twelve clips preserve reference durations and exact gait metadata", async () => {
+  const gltf = await loadBot();
+  const durations = { Idle: 6, Walk: 1.04, TurnLeft: 1, TurnRight: 1, Wave: 2.5, SitDown: 1.5, SeatedIdle: 5, StandUp: 1.4, Listen: 4, Think: 4, Speak: 3.2, Present: 3 };
+  for (const [name, seconds] of Object.entries(durations)) {
+    assert.ok(Math.abs(gltf.animations.find(c => c.name === name).duration - seconds) < 1e-5, name);
+  }
+  assert.ok(Math.abs(gltf.scene.getObjectByName("Root").userData.vexoraBot.walkSpeed - 0.6513647642679901) < 1e-10);
 });

@@ -137,6 +137,7 @@ test('the OpenAI adapter sends fenced prompts with a strict schema and the porta
   assert.equal(calls[0].init.headers.Authorization, 'Bearer portal-key');
   const body = JSON.parse(calls[0].init.body);
   assert.equal(body.model, 'model-x');
+  assert.equal(body.store, false);
   assert.equal(body.response_format.json_schema.strict, true);
   assert.match(body.messages[1].content, /<source id="S1" title="T">/);
 });
