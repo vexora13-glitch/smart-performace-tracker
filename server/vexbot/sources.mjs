@@ -41,16 +41,20 @@ export function mentions(question, name) {
   const titled = normalise(name.replace(/^[^:]{1,40}:\s*/, '')).trim();
   if (titled !== full && titled.length >= 6 && asked.includes(` ${titled} `)) return true;
   if (Boolean(base) && (base.includes(' ') || base.length >= 6) && asked.includes(` ${base} `)) return true;
-  // Speech-to-text often joins or splits words ("Pikepoint.pdf" for “pike point.pdf”). Compare without spaces,
-  // but only across whole words of the question and only for distinctive names.
-  const words = asked.trim().split(' ');
+  // Speech-to-text often joins or splits words ("Pikepoint.pdf" for “pike point.pdf”) and writes spoken numbers
+  // as digits ("part1.txt" for “part-one.txt”). Compare without spaces, with number words as digits, but only
+  // across whole words of the question and only for distinctive names.
+  const words = spokenForm(asked).split(' ');
   const joined = (target) => target.length >= 8 && words.some((_, from) => {
     let run = '';
     for (let at = from; at < words.length && run.length < target.length; at++) run += words[at];
     return run === target;
   });
-  return joined(full.replaceAll(' ', '')) || ((base.includes(' ') || base.length >= 6) && joined(base.replaceAll(' ', '')));
+  const compact = (text) => spokenForm(text).replaceAll(' ', '');
+  return joined(compact(full)) || ((base.includes(' ') || base.length >= 6) && joined(compact(base)));
 }
+const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
+const spokenForm = (normalised) => normalised.trim().split(' ').map((word) => (NUMBER_WORDS.includes(word) ? String(NUMBER_WORDS.indexOf(word)) : word)).join(' ');
 
 const DEICTIC = /\b(?:this|that|the|my|our|attached|shared|uploaded)\s+(?:file|document|doc|pdf|attachment|deck|slides?|spreadsheet|presentation|report|brief|upload)s?\b|\b(?:file|document|doc|pdf|attachment)s?\s+(?:here|above|attached)\b|\b(?:summari[sz]e|analy[sz]e|review|explain|read)\s+(?:it|this|that)\b/i;
 /** “Summarize the document here”, “what does this file say”: a file is meant without being named. */

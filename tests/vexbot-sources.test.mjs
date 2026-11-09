@@ -18,6 +18,11 @@ test('a question names a file by its full name or a distinctive base name, howev
   for (const heard of ['Summarize Pikepoint.pdf.', 'Summarize PikePoint.pdf.', 'Summarize pike point.pdf.', 'Summarise the pikepoint document'])
     assert.equal(mentions(heard, 'pike point.pdf'), true, heard);
   assert.equal(mentions('Summarize the spike pointer notes', 'pike point.pdf'), false, 'joined only across whole words');
+  // Real transcription of a spoken “Summarize part one dot txt” on the hosted Preview.
+  for (const heard of ['Summarize part1.txt.', 'Summarize part 1.txt', 'Summarize part one.txt'])
+    assert.equal(mentions(heard, 'part-one.txt'), true, heard);
+  assert.equal(mentions('Summarize part one.txt', 'part-1.txt'), true, 'digits in the name, words in the question');
+  assert.equal(mentions('Summarize part2.txt', 'part-one.txt'), false);
   assert.equal(mentions('Summarize planner', 'plan ner.txt'), false, 'short joined names are not matched');
 });
 
