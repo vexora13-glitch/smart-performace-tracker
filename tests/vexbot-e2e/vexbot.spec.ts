@@ -192,6 +192,11 @@ test.describe('desktop Chrome', () => {
     await page.getByTestId('vexbot-mic').click();
     await expect(page.getByTestId('vexbot-status')).toContainText('Listening');
     await expect(page.locator('[data-testid=vexbot]')).toHaveAttribute('data-status', 'recording');
+    await page.getByRole('button', { name: 'Mute microphone', exact: true }).click();
+    await expect(page.locator('[data-testid=vexbot]')).toHaveAttribute('data-status', 'paused');
+    await expect(page.getByTestId('vexbot-status')).toContainText('Microphone muted');
+    await page.getByRole('button', { name: 'Resume microphone', exact: true }).click();
+    await expect(page.locator('[data-testid=vexbot]')).toHaveAttribute('data-status', 'recording');
     await page.waitForTimeout(1500);
     await page.getByTestId('vexbot-mic').click();
     await expect(page.getByTestId('vexbot-user').last()).toContainText('Summarize pike point.pdf');

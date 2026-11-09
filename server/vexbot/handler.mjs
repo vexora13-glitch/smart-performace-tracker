@@ -1,6 +1,8 @@
 // The Vexbot API. One POST endpoint with an `action`. Every request is authenticated, every workspace is
 // rechecked against the database on every call (including saved answers and spoken replies), and every
 // knowledge or settings change requires an administrator session verified with MFA (AAL2).
+import { selectHistory, retrievalQueries } from './context.mjs';
+import { realtimeReadiness } from './realtime.mjs';
 import { randomUUID } from 'node:crypto';
 import { authenticate, check, database, method, respondError } from '../runtime.mjs';
 import { HttpError, id as uuid, requiredText } from '../validation.mjs';
@@ -115,8 +117,16 @@ async function present(ctx, conversation, messages) {
 
 /** Passages for an ordinary question: published documents in scope, matching shared files, the profile. */
 async function gather(ctx, workspace, question, history, settings, inv) {
-  const previous = history.filter((turn) => turn.role === 'user').slice(-1).map((turn) => turn.content);
-  const rows = check(await ctx.db.rpc('vexbot_search', { workspace, question: [question, ...previous].join(' '), max_results: 6 })) ?? [];
+  const rows = [];
+  const seen = new Set();
+  for (const query of retrievalQueries(question, history)) {
+    if (rows.length >= 6) break;
+    const matches = check(await ctx.db.rpc('vexbot_search', { workspace, question: query, max_results: 6 })) ?? [];
+    for (const row of matches) {
+      const key = `${row.document_id}:${row.content}`;
+      if (!seen.has(key) && rows.length < 6) { seen.add(key); rows.push(row); }
+    }
+  }
   const passages = [
     ...rows.map((row) => ({ kind: 'document', document_id: row.document_id, file_id: null, title: row.title, content: row.content })),
     ...(inv ? await sharedPassages(ctx.db, inv, question) : []),
@@ -164,7 +174,6 @@ async function answer(ctx, { workspace, question, history, settings, attachments
   const note = planned.notes.length ? `\n\n${planned.notes.join(' ')}` : '';
   if (!ctx.provider) return { outcome: 'unavailable', content: notConfiguredText(profile) + note, ...none };
   const { sources } = planned;
-  if (!sources.length) return { outcome: 'no_answer', content: noAnswerText(profile) + note, ...none };
   let result;
   try {
     result = validateAnswer(await ctx.provider.answer({ settings, question, sources, history }), sources);
@@ -213,7 +222,8 @@ async function conversationFor(ctx, id) {
   return conversation;
 }
 async function messagesOf(ctx, conversationId, limit = 200) {
-  return check(await ctx.db.from('vexbot_messages').select('*').eq('conversation_id', conversationId).order('created_at', { ascending: true }).limit(limit));
+  const rows = check(await ctx.db.from('vexbot_messages').select('*').eq('conversation_id', conversationId).order('created_at', { ascending: false }).order('id', { ascending: false }).limit(limit));
+  return rows.reverse();
 }
 
 // ---- Uploads ---------------------------------------------------------------------------------------------
@@ -238,7 +248,7 @@ async function download(ctx, path) {
 // ---- Actions ---------------------------------------------------------------------------------------------
 const ACTIONS = {
   async status(ctx) {
-    const value = { provider: ctx.provider?.name ?? null, voice: Boolean(ctx.provider?.voice), scanner: ctx.scanner?.name ?? null };
+    const value = { provider: ctx.provider?.name ?? null, voice: Boolean(ctx.provider?.voice), scanner: ctx.scanner?.name ?? null, realtime: realtimeReadiness() };
     if (!ctx.admin) return value;
     // Staff see what is missing (variable names only) and whether the workspace-files migration is applied.
     const cache = await ctx.db.from('vexbot_file_text').select('file_id', { head: true, count: 'exact' });
@@ -267,7 +277,8 @@ const ACTIONS = {
     if (workspace === null && attachments.length) throw new HttpError(400, 'Choose a workspace to attach files.');
     if (workspace !== null) await checkAttachments(ctx, workspace, attachments);
     const since = new Date(Date.now() - 3600_000).toISOString();
-    const { count } = await ctx.db.from('vexbot_messages').select('id,vexbot_conversations!inner(user_id)', { count: 'exact', head: true }).eq('role', 'user').eq('vexbot_conversations.user_id', ctx.user.id).gte('created_at', since);
+    const { count, error: countError } = await ctx.db.from('vexbot_messages').select('id,vexbot_conversations!inner(user_id)', { count: 'exact', head: true }).eq('role', 'user').eq('vexbot_conversations.user_id', ctx.user.id).gte('created_at', since);
+    if (countError) throw new HttpError(503, 'Usage limits could not be checked. Please try again shortly.');
     if ((count ?? 0) >= QUESTIONS_PER_HOUR) throw new HttpError(429, 'You have asked a lot of questions this hour. Please try again later or message the team.');
 
     let conversation;
@@ -277,8 +288,8 @@ const ACTIONS = {
       conversation = await conversationFor(ctx, input.conversation_id);
       if (conversation.workspace_id !== workspace) throw new HttpError(400, 'This conversation belongs to another workspace.');
       // Withdrawn answers are not fed back to the model.
-      const shown = (await present(ctx, conversation, await messagesOf(ctx, conversation.id))).slice(-8);
-      history = shown.map((m) => ({ role: m.role, content: m.withdrawn ? '(answer withdrawn)' : m.content }));
+      const shown = await present(ctx, conversation, await messagesOf(ctx, conversation.id));
+      history = selectHistory(shown);
       // "Summarise it" after an answer about a file means that same file.
       recent = (shown.filter((m) => m.role === 'assistant' && !m.withdrawn).at(-1)?.citations ?? []).map((c) => ({ kind: c.kind, id: c.id }));
     } else {

@@ -35,6 +35,6 @@ export default defineConfig({
     command: 'npm run dev:localtest',
     url: `http://localhost:${port}`,
     reuseExistingServer: false,
-    env: { PORTAL_DEV_PORT: String(port), VEXBOT_PROVIDER: 'mock', VEXBOT_SCANNER: 'mock' },
+    env: { PORTAL_DEV_PORT: String(port), VEXBOT_PROVIDER: 'mock', VEXBOT_SCANNER: 'mock', VEXBOT_MOCK_TRANSCRIPT: 'Summarize pike point.pdf' },
   },
 });

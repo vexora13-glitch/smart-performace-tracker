@@ -27,6 +27,7 @@ function openaiProvider(env) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model,
+          store: false,
           messages: [
             { role: 'system', content: systemPrompt(settings) },
             { role: 'user', content: userPrompt({ question, sources, history }) },
