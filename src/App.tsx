@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { LayoutGroup, m, useReducedMotion } from 'motion/react';
+import { LayoutGroup } from 'motion/react';
 import { VexoraBrand } from './design/Brand';
 import { VexoraPageTransition, VexoraReveal } from './design/motion';
-import { motionTokens } from './design/motion-tokens';
 import type { Session } from '@supabase/supabase-js';
 import {
   ArrowUpRight,
@@ -20,19 +19,23 @@ import {
   PanelLeftOpen,
   Menu,
   X,
+  Trash2,
+  Folder, Video,
 } from 'lucide-react';
 import { hasSupabaseConfig, supabase } from './lib/supabase';
 import { accessMap, db, loadPortal, unread, unwrap } from './services/portal';
-import { Vexbot } from './vexbot/Vexbot';
+import { ASK_EVENT, Vexbot } from './vexbot/Vexbot';
 import { VexbotAdmin } from './components/VexbotAdmin';
 import { emptyData, type PortalData, type Profile } from './types/portal';
 import { Login } from './components/Login';
 import { ClientDialog } from './components/ClientDialog';
+import { DeleteClientsDialog } from './components/DeleteClientsDialog';
 import { Workspace } from './components/Workspace';
 import { Chat } from './components/Chat';
 import './App.css';
 
 type Page = 'Dashboard' | 'Clients' | 'Messages' | 'Vexbot';
+export type WorkspaceSection = 'Overview' | 'Documents' | 'Videos' | 'Workspace' | 'Project Updates' | 'Team & Contacts';
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -40,13 +43,17 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [page, setPage] = useState<Page>('Dashboard');
+  const [section, setSection] = useState<WorkspaceSection>(() => window.location.hash.startsWith('#video=') ? 'Videos' : 'Workspace');
+  const [presentationTitle, setPresentationTitle] = useState('');
   const [workspace, setWorkspace] = useState<string | null>(null);
   const [dialog, setDialog] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [selectedClients, setSelectedClients] = useState<string[]>([]);
+  const [deletingClients, setDeletingClients] = useState<string[] | null>(null);
+  const [clientNotice, setClientNotice] = useState('');
   const [retry, setRetry] = useState(0);
   const [collapsed, setCollapsed] = useState(false);
   const mobileMenu = useRef<HTMLDialogElement>(null);
-  const reduced = useReducedMotion();
   useEffect(() => {
     if (!supabase) {
       setLoading(false);
@@ -69,6 +76,9 @@ export default function App() {
         setData(emptyData);
         setWorkspace(null);
         setPage('Dashboard');
+        setSelectedClients([]);
+        setDeletingClients(null);
+        setClientNotice('');
         setLoading(false);
       }
     });
@@ -82,6 +92,18 @@ export default function App() {
     const next = await loadPortal();
     setData(next);
   }, []);
+  useEffect(() => {
+    const openSharedVideo = () => {
+      const id = new URLSearchParams(window.location.hash.slice(1)).get('video');
+      const file = data.files.find(file => file.id === id && file.mime_type.startsWith('video/'));
+      if (!file) return;
+      setWorkspace(file.workspace_id);
+      setSection('Videos');
+      setPage('Dashboard');
+    };
+    window.addEventListener('hashchange', openSharedVideo);
+    return () => window.removeEventListener('hashchange', openSharedVideo);
+  }, [data.files]);
   useEffect(() => {
     if (!userId) {
       setLoading(false);
@@ -112,10 +134,10 @@ export default function App() {
         setData(next);
         // Clients open their own workspace, or the first one they are a member of.
         setWorkspace(
-          ownProfile.role === 'client'
+          next.files.find(file => file.id === new URLSearchParams(window.location.hash.slice(1)).get('video'))?.workspace_id ?? (ownProfile.role === 'client'
             ? ((next.clients.find((row) => row.id === ownProfile.id) ?? next.clients[0])?.id ??
                 null)
-            : null,
+            : null),
         );
       }
     })()
@@ -209,11 +231,51 @@ export default function App() {
   const clients = data.clients.filter((row) =>
     `${row.company} ${row.email}`.toLowerCase().includes(search.toLowerCase()),
   );
+  const listedClients = clients.slice(0, page === 'Dashboard' ? 5 : undefined);
+  const selected = selectedClients.filter((id) => data.clients.some((client) => client.id === id));
+  const allListedSelected =
+    listedClients.length > 0 && listedClients.every((client) => selected.includes(client.id));
+  function selectClient(id: string) {
+    setSelectedClients((current) =>
+      current.includes(id) ? current.filter((value) => value !== id) : [...current, id],
+    );
+  }
   function navigate(next: Page) {
+    setPresentationTitle('');
+    if (next === 'Dashboard') setSection('Workspace');
     mobileMenu.current?.close();
     setPage(next);
     if (admin) setWorkspace(null);
     setSearch('');
+    setSelectedClients([]);
+    setClientNotice('');
+  }
+  function navigateWorkspace(next: WorkspaceSection) {
+    setPresentationTitle('');
+    mobileMenu.current?.close();
+    setSection(next);
+    setPage('Dashboard');
+    if (!workspace) setWorkspace(ownWorkspaces[0]?.id ?? data.clients[0]?.id ?? null);
+  }
+  const portalNavigation = [
+    { label: 'Dashboard' as const, icon: LayoutDashboard },
+    ...(admin ? [{ label: 'Clients' as const, icon: Users }] : []),
+    { label: 'Messages' as const, icon: MessageSquare },
+    { label: 'Documents' as const, icon: Folder },
+    { label: 'Videos' as const, icon: Video },
+    { label: 'VexBot' as const, icon: Bot },
+  ];
+  function navigationActive(label: typeof portalNavigation[number]['label']) {
+    if (label === 'Documents' || label === 'Videos') return page === 'Dashboard' && !!client && section === label;
+    if (label === 'VexBot') return page === 'Vexbot';
+    return page === label && (label !== 'Dashboard' || !client || !['Documents', 'Videos'].includes(section));
+  }
+  function portalNavigate(label: typeof portalNavigation[number]['label']) {
+    if (label === 'VexBot' && !admin) {
+      window.dispatchEvent(new CustomEvent(ASK_EVENT, { detail: { workspace: workspace ?? ownWorkspaces[0]?.id ?? null, question: '' } }));
+      mobileMenu.current?.close();
+    } else if (label === 'Documents' || label === 'Videos') navigateWorkspace(label);
+    else { setSection('Workspace'); navigate(label === 'VexBot' ? 'Vexbot' : label); }
   }
   return (
     <div className={`app-layout ${collapsed ? 'is-collapsed' : ''}`}>
@@ -232,49 +294,15 @@ export default function App() {
         >
           <VexoraBrand />
         </a>
-        <div className="nav-label">YOUR WORKSPACE</div>
         <LayoutGroup id="portal-navigation">
           <nav aria-label="Main navigation">
-            {(
-              [
-                'Dashboard',
-                ...(admin ? ['Clients'] : []),
-                'Messages',
-                ...(admin ? ['Vexbot'] : []),
-              ] as Page[]
-            ).map((item) => {
-              const Icon =
-                item === 'Dashboard'
-                  ? LayoutDashboard
-                  : item === 'Clients'
-                    ? Users
-                    : item === 'Vexbot'
-                      ? Bot
-                      : MessageSquare;
-              return (
-                <button
-                  key={item}
-                  className={`nav-item ${page === item ? 'active' : ''}`}
-                  aria-label={item}
-                  aria-current={page === item ? 'page' : undefined}
-                  title={item}
-                  onClick={() => navigate(item)}
-                >
-                  <Icon size={19} />
-                  <span className="nav-copy">{item}</span>
-                  {page === item && (
-                    <m.span
-                      className="nav-indicator"
-                      layoutId="active-navigation"
-                      aria-hidden="true"
-                      transition={reduced ? { duration: 0 } : motionTokens.spring}
-                    />
-                  )}
-                  {item === 'Messages' && totalUnread > 0 && (
-                    <span className="nav-count">{totalUnread}</span>
-                  )}
-                </button>
-              );
+            {portalNavigation.map(({ label, icon: Icon }) => {
+              const active = navigationActive(label);
+              return <button key={label} className={`nav-item ${active ? 'active' : ''}`} aria-label={label}
+                aria-current={active ? 'page' : undefined} title={label} onClick={() => portalNavigate(label)}>
+                <Icon size={27} /><span className="nav-copy">{label}</span>
+                {label === 'Messages' && totalUnread > 0 && <span className="nav-count">{totalUnread}</span>}
+              </button>;
             })}
           </nav>
         </LayoutGroup>
@@ -320,8 +348,9 @@ export default function App() {
             >
               <Menu size={19} />
             </button>
-            <span className="breadcrumb-prefix">Workspace</span> <ChevronRight size={13} />{' '}
-            <strong>{client?.company || page}</strong>
+            <button className="text-button breadcrumb-prefix" onClick={() => navigate('Dashboard')}>Home</button> <ChevronRight size={16} />{' '}
+            {client && page !== 'Messages' && <><span>{section}</span><ChevronRight size={16} /></>}
+            <strong>{client && section === 'Videos' && presentationTitle ? presentationTitle : client?.company || (page === 'Dashboard' ? 'Dashboard' : page)}</strong>
           </span>
           <span className="topbar-right">
             {ownWorkspaces.length > 1 && (
@@ -339,8 +368,7 @@ export default function App() {
                 ))}
               </select>
             )}
-            <span className="status-dot" />
-            Vexora Client Portal
+            <span className="header-profile"><span className="avatar">{profile.display_name.split(' ').map(name => name[0]).slice(0, 2).join('')}</span><strong>{profile.display_name}</strong></span>
             <button
               aria-label="Refresh portal"
               className="icon-button"
@@ -348,7 +376,7 @@ export default function App() {
             >
               <RefreshCw size={16} />
             </button>
-            <button aria-label="Log out" className="secondary topbar-logout" onClick={signOut}>
+            <button aria-label="Sign out" className="secondary topbar-logout" onClick={signOut}>
               <LogOut size={15} />
               <span>Log out</span>
             </button>
@@ -374,6 +402,8 @@ export default function App() {
                 data={data}
                 readOnly={readOnly}
                 refresh={refresh}
+                section={section}
+                onPresentationTitle={setPresentationTitle}
                 onManage={() => setDialog(client.id)}
                 onMessages={() => setPage('Messages')}
                 onBack={admin ? () => setWorkspace(null) : undefined}
@@ -511,6 +541,61 @@ export default function App() {
                         onChange={(event) => setSearch(event.target.value)}
                       />
                     </label>
+                    {admin && listedClients.length > 0 && (
+                      <div className="client-selection-toolbar">
+                        <label className="client-selection">
+                          <input
+                            type="checkbox"
+                            aria-label={
+                              search
+                                ? 'Select all matching clients'
+                                : page === 'Dashboard'
+                                  ? 'Select listed clients'
+                                  : 'Select all clients'
+                            }
+                            checked={allListedSelected}
+                            ref={(input) => {
+                              if (input)
+                                input.indeterminate =
+                                  !allListedSelected &&
+                                  listedClients.some((client) => selected.includes(client.id));
+                            }}
+                            onChange={() =>
+                              setSelectedClients((current) =>
+                                allListedSelected
+                                  ? current.filter(
+                                      (id) => !listedClients.some((client) => client.id === id),
+                                    )
+                                  : [
+                                      ...new Set([
+                                        ...current,
+                                        ...listedClients.map((client) => client.id),
+                                      ]),
+                                    ],
+                              )
+                            }
+                          />
+                          {search
+                            ? 'Select all matches'
+                            : page === 'Dashboard'
+                              ? 'Select listed clients'
+                              : 'Select all'}
+                        </label>
+                        <span role="status">{selected.length} selected</span>
+                        <button
+                          className="danger-button"
+                          disabled={!selected.length}
+                          onClick={() => setDeletingClients(selected)}
+                        >
+                          <Trash2 size={16} /> Delete selected
+                        </button>
+                      </div>
+                    )}
+                    {clientNotice && (
+                      <p className="notice" role="status">
+                        {clientNotice}
+                      </p>
+                    )}
                     <div className="client-list">
                       {clients.length === 0 ? (
                         <div className="empty">
@@ -529,31 +614,52 @@ export default function App() {
                           )}
                         </div>
                       ) : (
-                        clients.slice(0, page === 'Dashboard' ? 5 : undefined).map((row) => (
-                          <button
-                            className="client-row"
-                            key={row.id}
-                            onClick={() => {
-                              setWorkspace(row.id);
-                              setPage('Clients');
-                            }}
-                          >
-                            <span className="avatar client-avatar">
-                              {row.company.slice(0, 2).toUpperCase()}
-                            </span>
-                            <span className="row-copy">
-                              <strong>{row.company}</strong>
-                              <small>{row.email}</small>
-                            </span>
-                            <span
-                              className={`pill ${data.profiles.find((p) => p.id === row.id)?.active ? '' : 'muted'}`}
+                        listedClients.map((row) => (
+                          <div className="client-list-entry" key={row.id}>
+                            {admin && (
+                              <input
+                                className="client-checkbox"
+                                type="checkbox"
+                                aria-label={`Select ${row.company}`}
+                                checked={selected.includes(row.id)}
+                                onChange={() => selectClient(row.id)}
+                              />
+                            )}
+                            <button
+                              className="client-row"
+                              key={row.id}
+                              onClick={() => {
+                                setWorkspace(row.id);
+                                setPage('Clients');
+                              }}
                             >
-                              {data.profiles.find((p) => p.id === row.id)?.active
-                                ? 'Active'
-                                : 'Inactive'}
-                            </span>
-                            <ChevronRight size={17} />
-                          </button>
+                              <span className="avatar client-avatar">
+                                {row.company.slice(0, 2).toUpperCase()}
+                              </span>
+                              <span className="row-copy">
+                                <strong>{row.company}</strong>
+                                <small>{row.email}</small>
+                              </span>
+                              <span
+                                className={`pill ${data.profiles.find((p) => p.id === row.id)?.active ? '' : 'muted'}`}
+                              >
+                                {data.profiles.find((p) => p.id === row.id)?.active
+                                  ? 'Active'
+                                  : 'Inactive'}
+                              </span>
+                              <ChevronRight size={17} />
+                            </button>
+                            {admin && (
+                              <button
+                                className="icon-button client-delete"
+                                aria-label={`Delete ${row.company}`}
+                                title={`Delete ${row.company}`}
+                                onClick={() => setDeletingClients([row.id])}
+                              >
+                                <Trash2 size={17} />
+                              </button>
+                            )}
+                          </div>
                         ))
                       )}
                     </div>
@@ -637,21 +743,10 @@ export default function App() {
           </button>
         </div>
         <nav aria-label="Mobile navigation">
-          {(
-            [
-              'Dashboard',
-              ...(admin ? ['Clients'] : []),
-              'Messages',
-              ...(admin ? ['Vexbot'] : []),
-            ] as Page[]
-          ).map((item) => (
-            <button
-              key={item}
-              className="secondary"
-              aria-current={page === item ? 'page' : undefined}
-              onClick={() => navigate(item)}
-            >
-              {item}
+          {portalNavigation.map(({ label, icon: Icon }) => (
+            <button key={label} className="secondary" aria-current={navigationActive(label) ? 'page' : undefined}
+              onClick={() => portalNavigate(label)}><Icon size={20} />{label}
+              {label === 'Messages' && totalUnread > 0 && <span className="nav-count">{totalUnread}</span>}
             </button>
           ))}
         </nav>
@@ -664,6 +759,49 @@ export default function App() {
           profiles={data.profiles}
           onClose={() => setDialog(null)}
           onSaved={refresh}
+        />
+      )}
+      {deletingClients && (
+        <DeleteClientsDialog
+          clients={data.clients.filter((client) => deletingClients.includes(client.id))}
+          onClose={() => setDeletingClients(null)}
+          onDeleted={async (ids) => {
+            setSelectedClients((current) => current.filter((id) => !ids.includes(id)));
+            if (ids.length) {
+              // Clear deleted workspace data immediately, even if the refresh fails.
+              setData((current) => {
+                const conversations = new Set(
+                  current.conversations
+                    .filter((row) => ids.includes(row.workspace_id))
+                    .map((row) => row.id),
+                );
+                return {
+                  profiles: current.profiles.filter((row) => !ids.includes(row.id)),
+                  clients: current.clients.filter((row) => !ids.includes(row.id)),
+                  conversations: current.conversations.filter((row) => !conversations.has(row.id)),
+                  messages: current.messages.filter(
+                    (row) => !conversations.has(row.conversation_id),
+                  ),
+                  reads: current.reads.filter(
+                    (row) => !conversations.has(row.conversation_id) && !ids.includes(row.user_id),
+                  ),
+                  files: current.files.filter((row) => !ids.includes(row.workspace_id)),
+                  announcements: current.announcements.filter(
+                    (row) => !ids.includes(row.workspace_id),
+                  ),
+                  members: current.members.filter(
+                    (row) => !ids.includes(row.workspace_id) && !ids.includes(row.user_id),
+                  ),
+                };
+              });
+              setClientNotice(
+                `${ids.length} ${ids.length === 1 ? 'client permanently deleted' : 'clients permanently deleted'}. Files removed and platform access revoked.`,
+              );
+            }
+            await refresh().catch(() =>
+              setError('Refresh is unavailable. Please refresh the portal to update the list.'),
+            );
+          }}
         />
       )}
       <Vexbot

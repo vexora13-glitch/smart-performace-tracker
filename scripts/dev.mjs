@@ -54,10 +54,13 @@ const server = await createServer({
             return res;
           };
           try {
+            const limit = pathname === '/api/clients' && req.method === 'DELETE'
+              ? 65_536
+              : (BODY_LIMITS[pathname] ?? 16_384);
             let body = '';
             for await (const chunk of req) {
               body += chunk;
-              if (Buffer.byteLength(body) > (BODY_LIMITS[pathname] ?? 16384)) {
+              if (Buffer.byteLength(body) > limit) {
                 res.status(413).json({ error: 'Request is too large.' });
                 return;
               }

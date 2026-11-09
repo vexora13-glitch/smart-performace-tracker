@@ -28,11 +28,13 @@ export function parseVideoTime(value: string) {
 }
 
 export function activeChapter(chapters: Chapter[], seconds: number) {
+  // Chapter records support milliseconds; media engines may round seeks to microseconds.
+  const timestamp = Math.round(seconds * 1000) / 1000;
   let current: Chapter | undefined;
   for (const chapter of chapters) {
-    if (chapter.start <= seconds && (!current || chapter.start > current.start)) current = chapter;
+    if (Math.round(chapter.start * 1000) / 1000 <= timestamp && (!current || chapter.start > current.start)) current = chapter;
   }
-  return current && (current.end === null || seconds < current.end) ? current.id : undefined;
+  return current && (current.end === null || timestamp < current.end) ? current.id : undefined;
 }
 
 export function chapterError(chapters: Chapter[], duration: number | null) {

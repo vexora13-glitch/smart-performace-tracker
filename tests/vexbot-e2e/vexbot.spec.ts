@@ -38,7 +38,7 @@ async function record(page: Page) {
 }
 const seen = (page: Page) => page.evaluate(() => (window as unknown as { __seen: Record<string, string[]> }).__seen);
 
-/** Counts purple and lime pixels where the robot is drawn, from a real screenshot of the WebGL canvas. */
+/** Counts reference cyan light and unwanted lime in an actual WebGL screenshot. */
 async function robotPixels(page: Page) {
   const d = await robot(page);
   const ppm = Number(d.ppm), x = Number(d.x), y = Number(d.y);
@@ -53,14 +53,14 @@ async function robotPixels(page: Page) {
     const context = canvas.getContext('2d')!;
     context.drawImage(img, 0, 0);
     const data = context.getImageData(0, 0, canvas.width, canvas.height).data;
-    let purple = 0, lime = 0, metal = 0;
+    let cyan = 0, lime = 0, metal = 0;
     for (let i = 0; i < data.length; i += 4) {
       const [r, g, b] = [data[i], data[i + 1], data[i + 2]];
-      if (b > 170 && b - g > 50 && r > 90 && r < b) purple++;
+      if (g > 150 && b > 170 && g - r > 45 && b - r > 60) cyan++;
       if (g > 180 && g - b > 80 && r > 120 && r < g) lime++;
       if (Math.abs(r - g) < 12 && Math.abs(g - b) < 14 && r > 40 && r < 200) metal++;
     }
-    return { purple, lime, metal };
+    return { cyan, lime, metal };
   }, image.toString('base64'));
 }
 
@@ -113,7 +113,7 @@ test.describe('desktop Chrome', () => {
     expect(errors).toEqual([]);
   });
 
-  test('client: real WebGL purple robot, scroll flight, landing, walking and robot click', async ({ page }) => {
+  test('client: real WebGL cyan robot, scroll flight, landing, walking and robot click', async ({ page }) => {
     const errors = await login(page, seed().alice.email);
     await resting(page);
     const docked = await robot(page);
@@ -121,7 +121,7 @@ test.describe('desktop Chrome', () => {
     expect(Number(docked.x)).toBeLessThan(233);
     const pixels = await robotPixels(page);
     expect(pixels.metal).toBeGreaterThan(400);
-    expect(pixels.purple).toBeGreaterThan(20);
+    expect(pixels.cyan).toBeGreaterThan(20);
     expect(pixels.lime).toBe(0);
     await shot(page, 'desktop-06-client-workspace-robot');
 

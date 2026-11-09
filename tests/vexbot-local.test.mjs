@@ -207,9 +207,19 @@ test('Vexbot API against local Supabase', { skip: !local && 'Local Supabase is n
 
   await t.test('removing or disabling a member revokes access on the next request', async () => {
     assert.equal((await run(clients, staff.token, { action: 'member_access', id: member.id, workspace_id: acme.id, access: 'remove' }, 'PATCH')).status, 200);
-    // The credential cutoff has one-second resolution, as for password resets.
-    await new Promise((resolve) => setTimeout(resolve, 1100));
-    const fresh = await signIn(`viewer-${tag}@example.test`);
+    // Windows issues the cutoff; local Auth can run in a VM with a slightly different clock.
+    // Wait for a genuinely newer JWT rather than assuming a 1.1-second sleep crosses both clocks.
+    const cutoff = await service.from('portal_profiles').select('sessions_invalid_before').eq('id', member.id).single();
+    assert.equal(cutoff.error, null);
+    let fresh, issuedAt = 0;
+    const deadline = Date.now() + 10_000;
+    do {
+      fresh = await signIn(`viewer-${tag}@example.test`);
+      issuedAt = JSON.parse(Buffer.from(fresh.token.split('.')[1], 'base64url').toString()).iat;
+      if (issuedAt > cutoff.data.sessions_invalid_before) break;
+      await new Promise(resolve => setTimeout(resolve, 500));
+    } while (Date.now() < deadline);
+    assert.ok(issuedAt > cutoff.data.sessions_invalid_before, 'Auth issued a session newer than the credential cutoff');
     assert.equal((await call(fresh.token, { action: 'ask', workspace_id: acme.id, question: 'Hours?' })).status, 403);
     assert.equal((await fresh.client.from('portal_clients').select('id')).data.length, 0);
     assert.equal((await call(viewer.token, { action: 'ask', workspace_id: acme.id, question: 'Hours?' })).status, 401, 'old session is cut off');

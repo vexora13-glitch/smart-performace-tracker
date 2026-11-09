@@ -1,15 +1,14 @@
-// Ported from the public Vexora website's Vexbot renderer (src/lib/bot-stage.ts). Geometry, camera
-// framing, lighting rig and pose layering are unchanged; only the accent is the portal's purple instead
-// of the website's lime. The GLB is the website's exact file, served by this portal from /bot/.
+// Articulated website GLB with the portal reference's white shell, cyan lighting and round eyes.
+// Animation hierarchy, gait, camera framing and flight contracts remain unchanged.
 // Only ever imported dynamically, so Three.js stays out of the bundle until the character is needed.
 import { AdditiveBlending, BoxGeometry, CanvasTexture, Color, DirectionalLight, Euler, Group, Mesh, MeshBasicMaterial, MeshStandardMaterial, NeutralToneMapping, PerspectiveCamera, PMREMGenerator, Quaternion, Scene, Sprite, SpriteMaterial, SRGBColorSpace, Vector3, WebGLRenderer, type Object3D } from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { CatmullRomCurve3, Shape, ShapeGeometry, SphereGeometry, TorusGeometry, TubeGeometry } from 'three';
 import { BotAnimator } from "./bot-animator.ts";
 
 export const BOT_URL = "/bot/vexora-bot.glb";
 
-// The portal accent (#7561ce) lifted for emission, so the eyes and chest still read as light on metal.
-export const BOT_ACCENT = { emissive: "#8f78ff", base: "#2b2163", light: 0x9a86f0, glow: "143,120,255" };
+export const BOT_ACCENT = { emissive: "#21d9ff", base: "#067aaf", light: 0x54dfff, glow: "33,217,255" };
 // The GLB's two glowing materials. Everything else (gunmetal, graphite, polymer, visor) is untouched.
 const GLOW_MATERIALS = new Set(["LimeGlow", "EyeGlow"]);
 
@@ -88,19 +87,75 @@ function softDisc(inner: string, outer: string) {
   return texture;
 }
 
-/** Recolours the GLB's glow materials to the portal purple. Exported so tests can check it on the real file. */
-export function tintPurple(root: Object3D) {
+/** Apply the reference finish without changing any animated joint, mesh extent or source GLB. */
+export function styleReferenceBot(root: Object3D) {
   const tinted: string[] = [];
   root.traverse(object => {
     const mesh = object as Mesh;
     if (!mesh.isMesh) return;
     const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-    for (const material of materials) if (material instanceof MeshStandardMaterial && GLOW_MATERIALS.has(material.name)) {
-      material.emissive.set(BOT_ACCENT.emissive); material.color.set(BOT_ACCENT.base);
-      if (!tinted.includes(material.name)) tinted.push(material.name);
+    for (let index = 0; index < materials.length; index++) {
+      let material = materials[index];
+      if (!(material instanceof MeshStandardMaterial)) continue;
+      if (GLOW_MATERIALS.has(material.name)) {
+        material.emissive.set(BOT_ACCENT.emissive); material.color.set(BOT_ACCENT.base);
+        if (!tinted.includes(material.name)) tinted.push(material.name);
+      } else if (material.name === 'Gunmetal') {
+        material.color.set('#edf4ff'); material.metalness = .28; material.roughness = .24;
+      } else if (material.name === 'Graphite' && mesh.parent?.name === 'Head') {
+        // This material is also used at joints: give only the helmet its own porcelain finish.
+        const helmet = material.clone(); helmet.name = 'HelmetWhite';
+        helmet.color.set('#e1edff'); helmet.metalness = .22; helmet.roughness = .22;
+        materials[index] = helmet;
+        mesh.material = Array.isArray(mesh.material) ? materials : helmet;
+      }
     }
   });
   return tinted;
+}
+
+/** Small 3D additions follow the existing eye blink joints; no separate animation loop or texture download. */
+function referenceFeatures(root: Object3D) {
+  const cyan = new MeshStandardMaterial({ color: '#21d9ff', emissive: '#03b8ed', emissiveIntensity: 1.5, metalness: .15, roughness: .2 });
+  const black = new MeshStandardMaterial({ color: '#01111e', roughness: .1, metalness: .3 });
+  const white = new MeshBasicMaterial({ color: '#efffff' });
+  for (const name of ['Eye_L', 'Eye_R']) {
+    const eye = root.getObjectByName(name);
+    if (!eye) continue;
+    for (const child of eye.children) if ((child as Mesh).isMesh) child.visible = false;
+    const iris = new Mesh(new SphereGeometry(.039, 24, 16), cyan);
+    iris.scale.set(1, 1.15, .22); iris.position.z = .009; eye.add(iris);
+    const pupil = new Mesh(new SphereGeometry(.022, 20, 12), black);
+    pupil.scale.set(1, 1.15, .22); pupil.position.set(.003, 0, .018); eye.add(pupil);
+    const shine = new Mesh(new SphereGeometry(.007, 10, 8), white);
+    shine.scale.z = .2; shine.position.set(-.009, .017, .024); eye.add(shine);
+  }
+  const head = root.getObjectByName('Head');
+  if (head) {
+    const curve = new CatmullRomCurve3([new Vector3(-.043, .119, .202), new Vector3(0, .1, .214), new Vector3(.043, .119, .202)]);
+    head.add(new Mesh(new TubeGeometry(curve, 20, .0035, 6, false), cyan));
+    for (const side of [-1, 1]) {
+      const ring = new Mesh(new TorusGeometry(.049, .004, 8, 40), cyan);
+      ring.rotation.y = Math.PI / 2; ring.position.set(side * .23, .178, 0); head.add(ring);
+    }
+    // Enlarge the face within the original head's vertical envelope; blink tracks still own Eye_L/R.
+    const shell = new Group(); shell.name = 'ReferenceHelmet';
+    const parts = [...head.children];
+    head.add(shell); shell.scale.setScalar(1.22); shell.position.y = -.081;
+    parts.forEach(part => shell.add(part));
+  }
+  const chest = root.getObjectByName('Chest');
+  if (chest) {
+    const badge = new Mesh(new BoxGeometry(.18, .16, .006), new MeshStandardMaterial({ color: '#edf4ff', metalness: .28, roughness: .24 }));
+    badge.position.set(0, .157, .145); chest.add(badge);
+    const triangle = (points: [number, number][], color: string) => {
+      const shape = new Shape(); shape.moveTo(...points[0]); points.slice(1).forEach(point => shape.lineTo(...point)); shape.closePath();
+      const mesh = new Mesh(new ShapeGeometry(shape), new MeshStandardMaterial({ color, emissive: color, emissiveIntensity: .25, roughness: .25 }));
+      mesh.position.set(0, .157, .15); chest.add(mesh);
+    };
+    triangle([[-.065, .045], [-.01, .028], [.02, -.052]], '#13c6ff');
+    triangle([[.065, .045], [.026, -.027], [0, .013]], '#794bff');
+  }
 }
 
 export async function createBotStage(canvas: HTMLCanvasElement, url = BOT_URL): Promise<BotStage> {
@@ -111,7 +166,8 @@ export async function createBotStage(canvas: HTMLCanvasElement, url = BOT_URL): 
 
   const gltf = await new GLTFLoader().loadAsync(url);
   // Each stage owns a fresh GLTF instance, so the tint never leaks between stages.
-  tintPurple(gltf.scene);
+  styleReferenceBot(gltf.scene);
+  referenceFeatures(gltf.scene);
   const scene = new Scene();
   const pmrem = new PMREMGenerator(renderer);
   const room = studio();
@@ -242,6 +298,7 @@ export async function createBotStage(canvas: HTMLCanvasElement, url = BOT_URL): 
         meshes++;
         triangles += (mesh.geometry.index?.count ?? 0) / 3;
         const material = mesh.material as MeshStandardMaterial;
+        if (!(material instanceof MeshStandardMaterial)) return;
         materials[material.name] = { metalness: material.metalness, roughness: material.roughness, emissive: `#${material.emissive.getHexString()}`, emissiveIntensity: material.emissiveIntensity };
       });
       return { clips: gltf.animations.map(clip => clip.name), nodes, materials, triangles, meshes };

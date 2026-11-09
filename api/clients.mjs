@@ -1,14 +1,16 @@
 import { authenticate, check, database, method, respondError } from '../server/runtime.mjs';
 import { clientInput, HttpError, id, password, requiredText } from '../server/validation.mjs';
+import { deleteClients } from '../server/client-deletion.mjs';
 
 export function createHandler(getDatabase = database) {
   return async function handler(req, res) {
     res.setHeader('Cache-Control', 'no-store');
     try {
-      method(req, ['POST', 'PATCH']);
+      method(req, ['POST', 'PATCH', 'DELETE']);
       const db = getDatabase();
       await authenticate(req, db, true);
       const input = req.body || {};
+      if (req.method === 'DELETE') return res.status(200).json(await deleteClients(db, input));
       if (req.method === 'POST') {
         const value = clientInput(input);
         const { data, error } = await db.auth.admin.createUser({

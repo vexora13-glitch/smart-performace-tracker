@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { DOCUMENT_UPLOAD_BYTES, VIDEO_UPLOAD_BYTES, resumableUpload, type UploadOptions } from './resumable-upload';
 import type {
   Announcement,
   Client,
@@ -87,33 +88,39 @@ export const allowedTypes = [
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   'application/vnd.openxmlformats-officedocument.presentationml.presentation',
 ];
-export async function uploadFile(workspace: string, file: File) {
+export async function uploadFile(workspace: string, file: File, options: UploadOptions = {}) {
   if (!allowedTypes.includes(file.type))
     throw new Error('Choose a PDF, Office document, image, text file, MP4 or WebM video.');
-  const limit = file.type === 'video/mp4' ? 100 : 50;
-  if (!file.size || file.size > limit * 1024 * 1024)
-    throw new Error(`Files must be between 1 byte and ${limit} MB.`);
+  const limit = file.type.startsWith('video/') ? VIDEO_UPLOAD_BYTES : DOCUMENT_UPLOAD_BYTES;
+  if (!file.size || file.size > limit)
+    throw new Error(`Files must be between 1 byte and ${limit / 1024 / 1024} MiB.`);
   const name = file.name.slice(0, 240);
-  const path = `${workspace}/${crypto.randomUUID()}/${name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
-  unwrap(
+  let path = `${workspace}/${crypto.randomUUID()}/${name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+  if (file.size > 6 * 1024 * 1024) {
+    path = await resumableUpload(db(), workspace, file, path, options);
+  } else { unwrap(
     await db()
       .storage.from('portal-private')
       .upload(path, file, { contentType: file.type, upsert: false }),
-  );
+  ); }
+  options.onProgress?.({ percent: 100, phase: 'saving' });
   try {
     unwrap(
       await db()
         .from('portal_files')
-        .insert({
+        .upsert({
           workspace_id: workspace,
           name,
           path,
           mime_type: file.type,
           size_bytes: file.size,
-        }),
+        }, { onConflict: 'path', ignoreDuplicates: true }),
     );
   } catch (error) {
-    await db().storage.from('portal-private').remove([path]);
+    // A resumed transfer can finish in another tab, or an insert response can be lost
+    // after committing. Never remove an object that already has a library record.
+    const existing = await db().from('portal_files').select('id').eq('path', path).maybeSingle();
+    if (!existing.error && !existing.data) await db().storage.from('portal-private').remove([path]);
     throw error;
   }
 }

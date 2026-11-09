@@ -1,5 +1,4 @@
-/* Verified against www.vexoradigital.com computed styles, 9 November 2026.
-   Source: D:/Projects/Vexora-website/src/app/vexora.css. Portal extensions below. */
+/* Portal palette and proportions from docs/Vexora.png. Fonts remain locally hosted. */
 @font-face {
   font-family: Geist;
   font-style: normal;
@@ -23,25 +22,30 @@
 }
 :root {
   color-scheme: dark;
-  --vx-bg: #0b0d0e;
-  --vx-bg-2: #101413;
-  --vx-surface: #141817;
-  --vx-border: #262b29;
-  --vx-border-strong: #3a413d;
-  --vx-accent: #c8f56a;
-  --vx-accent-hover: #d8fb8e;
-  --vx-accent-ink: #10140a;
-  --vx-text: #f6f7f4;
-  --vx-text-2: #bfc4bf;
-  --vx-muted: #8f9590;
-  --vx-success: #c8f56a;
+  --vx-bg: #09172b;
+  --vx-bg-2: #071326;
+  --vx-surface: #10213a;
+  --vx-border: #2b4268;
+  --vx-border-strong: #5267a1;
+  --vx-accent: #8264ff;
+  --vx-accent-hover: #a28aff;
+  --vx-accent-ink: #ffffff;
+  --vx-text: #f7f9ff;
+  --vx-text-2: #b7c7e5;
+  --vx-muted: #9badce;
+  --vx-success: #70e2cb;
+  --vx-cyan: #21d9ff;
+  --vx-purple: #6545f5;
+  --vx-blue: #3564ff;
+  --vx-elevated: #162a48;
+  --vx-nav-gradient: linear-gradient(110deg, #6545f5, #5149f6);
   --vx-danger: #ff9bb0;
   --vx-font: Geist, 'Segoe UI', Arial, sans-serif;
   --vx-radius-sm: 8px;
   --vx-radius: 12px;
   --vx-radius-lg: 18px;
-  --vx-card-bg: linear-gradient(180deg, #171c1a 0%, #101413 100%);
-  --vx-glow: 0 0 0 1px #c8f56a0f, 0 18px 50px #00000080;
+  --vx-card-bg: linear-gradient(135deg, #162a48 0%, #0d1b30 100%);
+  --vx-glow: 0 0 0 1px #8264ff18, 0 18px 50px #02081580;
   --vx-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
   --vx-fast: 160ms;
   --vx-page-fade: 220ms;
@@ -53,22 +57,22 @@
   --vx-space-5: 24px;
   --vx-space-6: 32px;
   --vx-space-7: 48px;
-  --vx-gutter: clamp(18px, 3vw, 48px);
-  --vx-container: 1440px;
-  --vx-sidebar: 233px;
+  --vx-gutter: clamp(18px, 1.45vw, 28px);
+  --vx-container: 1800px;
+  --vx-sidebar: 255px;
   --vx-control: 44px;
   --vx-h1: clamp(28px, 2.5vw, 40px);
   --vx-body: 14px;
   --vx-small: 12px;
-  --vx-accent-soft: #c8f56a0f;
-  --vx-accent-border: #c8f56a40;
+  --vx-accent-soft: #8264ff15;
+  --vx-accent-border: #8264ff66;
   --vx-danger-soft: #ff9bb00d;
   --vx-danger-border: #ff9bb04d;
   --vx-warning: #f2cf83;
   --vx-warning-soft: #f2cf8314;
   --vx-overlay: #000000b3;
-  --vx-header: #0b0d0ee6;
-  --vx-focus: 0 0 0 3px #c8f56a26;
+  --vx-header: #09172b80;
+  --vx-focus: 0 0 0 3px #21d9ff40;
   --vx-shadow: 0 12px 36px #00000026;
   --vx-panel-duration: 240ms;
   /* Media-query literals: mobile 560, tablet 800, laptop 1100. */

@@ -25,7 +25,7 @@ test('brand matches the live reference, responsive shell keeps state and dialogs
         document.fonts.check('14px Geist'),
       ];
     }),
-  ).toEqual(['#0b0d0e', '#c8f56a', true]);
+  ).toEqual(['#09172b', '#8264ff', true]);
   await page.screenshot({ path: 'artifacts/redesign/after/dashboard-desktop.png', fullPage: true });
   await page.getByLabel('Search clients').fill('Acme');
   const canvas = await page.getByTestId('vexbot-canvas').elementHandle();
@@ -130,7 +130,7 @@ test('file categories retain backend metadata and download names; media dialog r
   );
   await page.getByRole('button', { name: 'Refresh portal' }).click();
   await page.getByRole('button', { name: /Acme Studio alice/ }).click();
-  await page.getByRole('button', { name: 'Documents', exact: true }).click();
+  await page.locator('.file-tabs').getByRole('button', { name: 'Documents', exact: true }).click();
   await expect(page.getByText('Project brief.txt', { exact: true })).toBeVisible();
   await expect(page.getByText('Walkthrough.webm', { exact: true })).toBeHidden();
   await page.route('**/storage/v1/object/authenticated/**', (route) =>
@@ -139,7 +139,7 @@ test('file categories retain backend metadata and download names; media dialog r
   const download = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Download Project brief.txt' }).click();
   expect((await download).suggestedFilename()).toBe('Project brief.txt');
-  await page.getByRole('button', { name: 'Videos', exact: true }).click();
+  await page.locator('.file-tabs').getByRole('button', { name: 'Videos', exact: true }).click();
   await expect(page.getByText('Walkthrough.webm', { exact: true })).toBeVisible();
   await expect(page.getByText('Project brief.txt', { exact: true })).toBeHidden();
   // Generate a real, silent WebM locally so playback is tested without external media or credentials.
@@ -177,7 +177,7 @@ test('file categories retain backend metadata and download names; media dialog r
   );
   await page.getByRole('button', { name: 'Play Walkthrough.webm' }).click();
   await expect(page.getByRole('dialog', { name: 'Walkthrough.webm' })).toBeVisible();
-  await expect(page.locator('video')).toHaveJSProperty('controls', true);
+  await expect(page.getByRole('button', { name: 'Pause video' })).toBeVisible();
   await expect
     .poll(() => page.locator('video').evaluate((video) => (video as HTMLVideoElement).readyState))
     .toBeGreaterThanOrEqual(2);
@@ -275,7 +275,7 @@ test('knowledge and settings tabs support arrow keys and fit narrow screens', as
   );
   await page
     .getByRole('navigation', { name: 'Main navigation' })
-    .getByRole('button', { name: 'Vexbot', exact: true })
+    .getByRole('button', { name: 'VexBot', exact: true })
     .click();
   await expect(page.getByRole('tab', { name: 'Knowledge', exact: true })).toHaveAttribute(
     'aria-selected',

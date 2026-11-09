@@ -377,6 +377,7 @@ export function Vexbot({
         director.current = movement;
         setStageReady(true);
         let shownKey: string | null = null;
+        let previousDock: 'perch' | 'bar' | null = null;
         const loop = (now: number) => {
           frame = requestAnimationFrame(loop);
           const delta = Math.min((now - last) / 1000 || 0, 0.05);
@@ -418,7 +419,11 @@ export function Vexbot({
             }
             shownKey = target.key;
           }
-          movement.setTarget(target);
+          // A resized sidebar can disappear entirely. Transfer directly between responsive docks,
+          // rather than flying the previous desktop-sized character across the mobile video/content.
+          const dockChanged = previousDock !== null && previousDock !== currentDock.kind;
+          movement.setTarget(dockChanged ? { ...target, instant: true } : target);
+          previousDock = currentDock.kind;
           movement.setAirspace({
             viewportWidth: innerWidth,
             viewportHeight: innerHeight,

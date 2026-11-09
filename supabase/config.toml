@@ -27,7 +27,7 @@ enable_confirmations = true
 
 [storage]
 enabled = true
-file_size_limit = "100MiB"
+file_size_limit = "200MiB"
 
 # Staff MFA: Vexbot knowledge and settings changes require an AAL2 (TOTP) session.
 [auth.mfa]

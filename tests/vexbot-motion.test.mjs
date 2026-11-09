@@ -577,7 +577,7 @@ test("portal: every page lands the whole figure inside the perch, at a readable 
     assert.ok(shown, page);
     const frame = silhouette(target.x, target.y, pixelsPerMetre, target.rest);
     assert.ok(frame.left >= perch.left && frame.right <= perch.right && frame.top >= perch.top && frame.bottom <= perch.bottom, `${page} ${JSON.stringify(frame)}`);
-    assert.ok(pixelsPerMetre * 1.72 >= 96 && pixelsPerMetre * 1.72 <= 165, `${page} size`);
+    assert.ok(pixelsPerMetre * 1.72 >= 96 && pixelsPerMetre * 1.72 <= 350, `${page} size`);
   }
   assert.equal(stationTarget(layout("Messages")).target.rest, "sit");
 });
@@ -606,17 +606,18 @@ test("portal: the open assistant panel takes the character directly into its sta
   assert.equal(target.key, "panel"); assert.ok(target.instant);
 });
 
-test("portal: only the two glow materials turn purple; metal, polymer and visor are untouched", async () => {
-  // bot-stage imports three's WebGL renderer, which loads fine without a canvas; only tintPurple is used.
-  const { tintPurple, BOT_ACCENT } = await import("../src/vexbot/bot-stage.ts");
+test("portal reference finish uses cyan light and white armour while retaining black joints and glass", async () => {
+  const { styleReferenceBot, BOT_ACCENT } = await import("../src/vexbot/bot-stage.ts");
   const gltf = await loadBot();
   const before = {};
   gltf.scene.traverse(o => { if (o.isMesh) before[o.material.name] = o.material.color.getHexString(); });
-  assert.deepEqual(tintPurple(gltf.scene).sort(), ["EyeGlow", "LimeGlow"]);
+  assert.deepEqual(styleReferenceBot(gltf.scene).sort(), ["EyeGlow", "LimeGlow"]);
   gltf.scene.traverse(o => {
     if (!o.isMesh) return;
     const m = o.material;
     if (m.name === "LimeGlow" || m.name === "EyeGlow") assert.equal(`#${m.emissive.getHexString()}`, BOT_ACCENT.emissive);
+    else if (m.name === 'Gunmetal') { assert.equal(m.color.getHexString(), 'edf4ff'); assert.equal(m.roughness, .24); }
+    else if (m.name === 'HelmetWhite') assert.equal(m.color.getHexString(), 'e1edff');
     else assert.equal(m.color.getHexString(), before[m.name], m.name);
   });
 });

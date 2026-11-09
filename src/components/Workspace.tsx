@@ -1,5 +1,5 @@
 import { ASK_EVENT } from '../vexbot/Vexbot';
-import { lazy, Suspense, useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { AnimatePresence, LayoutGroup, m, useReducedMotion } from 'motion/react';
 import { motionTokens } from '../design/motion-tokens';
 import {
@@ -24,6 +24,7 @@ import {
   Trash2,
   Upload,
   X,
+  FileVideo, Link,
 } from 'lucide-react';
 import {
   allowedTypes,
@@ -35,6 +36,8 @@ import {
   uploadFile,
 } from '../services/portal';
 import type { Client, PortalData, PortalFile, Profile } from '../types/portal';
+import type { WorkspaceSection } from '../App';
+import type { UploadProgress } from '../services/resumable-upload';
 
 const ClientVideo = lazy(() => import('./video/client-video'));
 const VideoChapterEditor = lazy(() => import('./video/video-chapter-editor'));
@@ -58,6 +61,8 @@ export function Workspace({
   onManage,
   onMessages,
   onBack,
+  section = 'Workspace',
+  onPresentationTitle,
 }: {
   client: Client;
   profile: Profile;
@@ -67,17 +72,25 @@ export function Workspace({
   onManage: () => void;
   onMessages: () => void;
   onBack?: () => void;
+  section?: WorkspaceSection;
+  onPresentationTitle?: (title: string) => void;
 }) {
   const admin = profile.role === 'admin';
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
+  const [pendingUpload, setPendingUpload] = useState<File | null>(null);
+  const uploadAbort = useRef<AbortController | null>(null);
+  useEffect(() => () => uploadAbort.current?.abort(), []);
   const [publishing, setPublishing] = useState(false);
   const [video, setVideo] = useState<{ url: string; file: PortalFile; edit: boolean } | null>(null);
+  const [presentation, setPresentation] = useState<{ url: string; file: PortalFile } | null>(null);
+  const [presentationRevision, setPresentationRevision] = useState(0);
   const videoDialog = useRef<HTMLDialogElement>(null);
   const [removing, setRemoving] = useState<PortalFile | null>(null);
   const removeDialog = useRef<HTMLDialogElement>(null);
-  const files = data.files.filter((row) => row.workspace_id === client.id);
+  const files = useMemo(() => data.files.filter((row) => row.workspace_id === client.id), [data.files, client.id]);
   const announcements = data.announcements.filter((row) => row.workspace_id === client.id);
   const conversations = data.conversations.filter((row) => row.workspace_id === client.id);
   const unreadCount = conversations.reduce((sum, row) => sum + unread(row.id, data, profile.id), 0);
@@ -92,6 +105,30 @@ export function Workspace({
         ? file.mime_type.startsWith('video/')
         : !file.mime_type.startsWith('video/')),
   );
+  useEffect(() => {
+    setCategory(section === 'Documents' ? 'Documents' : section === 'Videos' ? 'Videos' : 'All files');
+  }, [section]);
+  const sharedId = new URLSearchParams(window.location.hash.slice(1)).get('video');
+  const firstVideo = files.find(file => file.id === sharedId && file.mime_type.startsWith('video/')) ?? files.find(file => file.mime_type.startsWith('video/'));
+  useEffect(() => {
+    if (section !== 'Videos' || !firstVideo || presentation) return;
+    let active = true;
+    void fileUrl(firstVideo).then(url => { if (active) setPresentation({ file: firstVideo, url }); })
+      .catch(error => { if (active) setError(error.message); });
+    return () => { active = false; };
+  }, [section, firstVideo, presentation]);
+  useEffect(() => {
+    let active = true;
+    const openSharedVideo = () => {
+      const id = new URLSearchParams(window.location.hash.slice(1)).get('video');
+      const file = files.find(file => file.id === id && file.mime_type.startsWith('video/'));
+      if (section !== 'Videos' || !file) return;
+      void fileUrl(file).then(url => { if (active) setPresentation({ file, url }); })
+        .catch(() => { if (active) setError('This presentation could not be loaded.'); });
+    };
+    window.addEventListener('hashchange', openSharedVideo);
+    return () => { active = false; window.removeEventListener('hashchange', openSharedVideo); };
+  }, [files, section]);
   const loadUploads = useCallback(async () => {
     setUploads(
       unwrap(
@@ -127,19 +164,30 @@ export function Workspace({
   }
   async function upload(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
+    event.target.value = '';
     if (!file) return;
+    await startUpload(file);
+  }
+  async function startUpload(file: File) {
+    const controller = new AbortController();
+    uploadAbort.current = controller;
+    setPendingUpload(file);
+    setUploadProgress({ percent: 0, phase: 'uploading' });
     setBusy(true);
     setError('');
     setNotice('');
     try {
-      await uploadFile(client.id, file);
+      await uploadFile(client.id, file, { signal: controller.signal, onProgress: setUploadProgress });
+      setPendingUpload(null);
+      setUploadProgress(null);
       setNotice('File shared with this client.');
       await refresh();
     } catch (error) {
-      setError((error as Error).message);
+      if ((error as Error).name === 'AbortError') setNotice('Upload paused. Resume to continue from the last saved chunk.');
+      else setError((error as Error).message);
     } finally {
       setBusy(false);
-      event.target.value = '';
+      uploadAbort.current = null;
     }
   }
   async function publish(event: FormEvent<HTMLFormElement>) {
@@ -204,15 +252,39 @@ export function Workspace({
       setBusy(false);
     }
   }
+  async function sharePresentation() {
+    if (!presentation) return;
+    // Share a portal location, never a private signed storage URL. Recipients still need workspace access.
+    const target = new URL(window.location.href);
+    target.hash = `video=${encodeURIComponent(presentation.file.id)}`;
+    try {
+      if (navigator.share) await navigator.share({ title: presentation.file.name, url: target.href });
+      else { await navigator.clipboard.writeText(target.href); setNotice('Portal link copied. The recipient must have access to this workspace.'); }
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) setError('The link could not be shared. Please copy the portal address from your browser.');
+    }
+  }
+  const showingPresentation = section === 'Videos' && presentation;
+  const uploadControl = admin && <label className={`upload-button ${busy ? 'disabled' : ''}`}>
+    <Upload size={16} />{busy && pendingUpload ? 'Uploading…' : 'Upload file'}
+    <input type="file" aria-label="Upload client file" accept={allowedTypes.join(',')} disabled={busy} onChange={upload} />
+  </label>;
+  useEffect(() => {
+    onPresentationTitle?.(section === 'Videos' && presentation ? presentation.file.name.replace(/\.(mp4|webm|mov|m4v)$/i, '') : '');
+  }, [section, presentation, onPresentationTitle]);
   return (
     <>
-      {onBack && (
+      {onBack && !showingPresentation && (
         <button className="text-button back-button" onClick={onBack}>
           <ArrowLeft size={15} />
           All clients
         </button>
       )}
-      <div className="page-heading heading-row">
+      {showingPresentation ? <div className="presentation-heading heading-row">
+        <span className="presentation-icon"><FileVideo size={44} /></span>
+        <div className="presentation-heading-copy"><h1>{presentation.file.name.replace(/\.(mp4|webm|mov|m4v)$/i, '')}</h1><p>A complete overview of the presentation, key details, and next steps.</p></div>
+        <div className="presentation-actions"><button className="secondary" onClick={() => openFile(presentation.file, true)}><Download size={21} />Download</button><button className="secondary" onClick={() => void sharePresentation()}><Link size={21} />Share</button></div>
+      </div> : <div className="page-heading heading-row">
         <div>
           <div className="eyebrow">
             {admin ? 'PRIVATE CLIENT WORKSPACE' : 'YOUR PRIVATE WORKSPACE'}
@@ -231,7 +303,7 @@ export function Workspace({
             Manage client
           </button>
         )}
-      </div>
+      </div>}
       {error && (
         <div role="alert" className="notice error">
           {error}
@@ -242,6 +314,25 @@ export function Workspace({
           {notice}
         </div>
       )}
+      {admin && pendingUpload && uploadProgress && <div className="upload-progress notice" aria-label="File upload progress">
+        <div role="status">{pendingUpload.name} · {uploadProgress.phase === 'saving' ? 'Saving file details…' : `${Math.floor(uploadProgress.percent)}%${uploadProgress.phase === 'retrying' ? ' · Connection interrupted, retrying…' : ''}`}</div>
+        <progress aria-label="Upload progress" value={uploadProgress.percent} max={100} />
+        {busy && uploadProgress.phase !== 'saving' && pendingUpload.size > 6 * 1024 * 1024 ? <button className="secondary" onClick={() => uploadAbort.current?.abort()}>Pause upload</button> :
+          !busy && <button className="secondary" onClick={() => void startUpload(pendingUpload)}>Resume upload</button>}
+      </div>}
+      {showingPresentation && <div className="presentation-page">
+        <Suspense fallback={<p role="status">Opening presentation…</p>}><ClientVideo key={`${presentation.file.id}:${presentationRevision}`} file={presentation.file} url={presentation.url} /></Suspense>
+        <div className="presentation-library">
+          {uploadControl}
+          <label>Presentation<select aria-label="Select presentation" value={presentation.file.id} onChange={async event => {
+            const file = files.find(file => file.id === event.target.value);
+            if (!file) return;
+            try { setPresentation({ file, url: await fileUrl(file) }); setError(''); } catch { setError('This presentation could not be loaded.'); }
+          }}>{files.filter(file => file.mime_type.startsWith('video/')).map(file => <option key={file.id} value={file.id}>{file.name}</option>)}</select></label>
+          {admin && <button className="secondary" onClick={() => openFile(presentation.file, false, true)} aria-label={`Manage video chapters for ${presentation.file.name}`}><Settings2 size={17} />Manage video chapters</button>}
+        </div>
+      </div>}
+      <div className={`workspace-sections section-${section.toLowerCase().replaceAll(' ', '-').replace('&', 'and')}`} hidden={!!showingPresentation}>
       <div className="workspace-grid">
         <section className="panel files-panel" aria-busy={busy}>
           <div className="panel-heading">
@@ -251,23 +342,11 @@ export function Workspace({
               </h2>
               <p>Documents and videos, in the right hands.</p>
             </div>
-            {admin && (
-              <label className={`upload-button ${busy ? 'disabled' : ''}`}>
-                <Upload size={16} />
-                {busy ? 'Uploading…' : 'Upload file'}
-                <input
-                  type="file"
-                  aria-label="Upload client file"
-                  accept={allowedTypes.join(',')}
-                  disabled={busy}
-                  onChange={upload}
-                />
-              </label>
-            )}
+            {uploadControl}
           </div>
           {admin && (
             <p className="file-hint">
-              MP4 up to 100 MB · PDF, Office, images, text and WebM up to 50 MB
+              MP4 and WebM up to 200 MiB · PDF, Office, images and text up to 50 MiB. Resume interrupted uploads by selecting the same file.
             </p>
           )}
           <LayoutGroup id="file-categories">
@@ -420,7 +499,7 @@ export function Workspace({
           </button>
         </section>
       </div>
-      <section className="panel updates-panel" data-testid="workspace-uploads" aria-busy={sending}>
+      <section className="panel updates-panel uploads-panel" data-testid="workspace-uploads" aria-busy={sending}>
         <div className="panel-heading">
           <div>
             <h2>
@@ -475,7 +554,7 @@ export function Workspace({
           </div>
         )}
       </section>
-      <section className="panel updates-panel">
+      <section className="panel updates-panel announcements-panel">
         <div className="panel-heading">
           <div>
             <h2>Latest updates</h2>
@@ -532,11 +611,17 @@ export function Workspace({
           ))
         )}
       </section>
+      {section === 'Team & Contacts' && <section className="panel contacts-panel"><div className="panel-heading"><div><h2>Team & Contacts</h2><p>Your workspace contacts and direct line to Vexora.</p></div></div><div className="files-list">
+        <div className="file-row"><span className="avatar">{client.company[0]}</span><div className="row-copy"><strong>{client.company}</strong><a href={`mailto:${client.email}`}>{client.email}</a></div></div>
+        {data.profiles.filter(person => person.role === 'admin' && person.active).map(person => <div className="file-row" key={person.id}><span className="avatar">{person.display_name[0]}</span><div className="row-copy"><strong>{person.display_name}</strong><small>Vexora team</small></div></div>)}
+        <button className="secondary" onClick={onMessages}><MessageSquare size={18} />Contact the team</button>
+      </div></section>}
+      </div>
       <dialog
         className="video-dialog"
         ref={videoDialog}
         aria-labelledby="video-title"
-        onClose={() => setVideo(null)}
+        onClose={() => { setVideo(null); setPresentationRevision(value => value + 1); }}
       >
         <div className="panel-heading">
           <h2 id="video-title">{video?.edit ? 'Manage video chapters' : video?.file.name}</h2>

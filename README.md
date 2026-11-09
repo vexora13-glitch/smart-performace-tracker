@@ -6,7 +6,7 @@
 | --- | --- |
 | Folder | `D:\Projects\smart-performance-tracker` (the only maintained copy) |
 | Branch | `portal` → PR #1 into `main` on `vexora13-glitch/smart-performace-tracker` (**public** repository) |
-| Obsolete | `D:\Projects\smart-performance-tracker-vexbot` (worktree of branch `vexbot`, fully merged; marked `OBSOLETE.txt`) |
+| Obsolete | `D:\Projects\smart-performance-tracker-vexbot` (archived worktree on `vexbot` with uncommitted changes) |
 
 One codebase, two configurations:
 

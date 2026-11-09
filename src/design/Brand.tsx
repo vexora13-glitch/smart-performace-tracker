@@ -1,4 +1,4 @@
-export function VexoraBrand({ subtitle = 'CLIENT PORTAL' }: { subtitle?: string }) {
+export function VexoraBrand({ subtitle = 'Client Portal' }: { subtitle?: string }) {
   return (
     <>
       <img className="brand-logo" src="/brand/vexora-logo.png" alt="" width="54" height="36" />

@@ -23,10 +23,10 @@ const STATIONS: Record<PortalPage, Station> = {
 };
 
 const STANDING_METRES = 1.72;
-const PERCH_MAX_PIXELS = 165;
+const PERCH_MAX_PIXELS = 350;
 const PERCH_MIN_PIXELS = 96;
 const MIN_PERCH_WIDTH = 150;
-const MIN_PERCH_HEIGHT = 170;
+const MIN_PERCH_HEIGHT = 116;
 export const BAR_ROBOT_PIXELS = 60;
 export const MIN_BAR_VIEWPORT = 420;
 
@@ -91,8 +91,9 @@ export function stationTarget(layout: Layout): Placement {
 
   // The perch. Sized to fit at its widest ordinary pose and its full height, feet on the perch's floor.
   const perch = dock.rect;
-  const widest = rest === "sit" ? 0.61 : 0.56;
-  const usable = perch.right - perch.left - SAFETY_MARGIN * 2;
+  // Reserve the flight silhouette as well as the standing pose, plus room for short page-to-page hops.
+  const widest = 0.66;
+  const usable = perch.right - perch.left - SAFETY_MARGIN * 2 - 32;
   const tall = perch.bottom - perch.top - SAFETY_MARGIN * 2;
   const pixels = Math.min(PERCH_MAX_PIXELS, (usable / (widest * 2)) * STANDING_METRES, (tall * STANDING_METRES) / 1.8);
   const pixelsPerMetre = pixels / STANDING_METRES;
