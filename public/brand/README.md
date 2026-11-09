@@ -1,0 +1,3 @@
+The Vexora logo is copied unchanged from `D:/Projects/Vexora-website/public/vexora-logo.png`, the source used by vexoradigital.com. The original blue/purple gradient belongs to the logo; the UI accent is the website's lime.
+
+Geist Latin and Latin Extended variable-font subsets in `../fonts` are copied unchanged from the website's built Next.js assets (`22a5144ee8d83bca-s.p.woff2` and `aa016aab0e6d1295-s.woff2`). Latin Extended preserves macrons in Māori and client names. Their SIL Open Font License and copyright notice are included in `../fonts/OFL.txt`, from https://github.com/google/fonts/blob/main/ofl/geist/OFL.txt.

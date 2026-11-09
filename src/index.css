@@ -1,25 +1,21 @@
+﻿@import './design/tokens.css';
 :root {
-  font-family:
-    Inter,
-    ui-sans-serif,
-    -apple-system,
-    BlinkMacSystemFont,
-    'Segoe UI',
-    sans-serif;
-  color: #252333;
-  background: #f8f9fc;
+  font-family: var(--vx-font);
+  color: var(--vx-text);
+  background: var(--vx-bg);
   font-synthesis: none;
   font-weight: 400;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: var(--vx-body);
+  line-height: 1.6;
 }
 * {
   box-sizing: border-box;
 }
 body {
   margin: 0;
+  min-width: 320px;
 }
 button,
 input,
@@ -34,87 +30,109 @@ label.upload-button {
 }
 button {
   cursor: pointer;
-  border: 1px solid transparent;
-  background: #7561ce;
-  color: #fff;
-  border-radius: 8px;
-  min-height: 40px;
+  border: 1px solid var(--vx-accent);
+  background: var(--vx-accent);
+  color: var(--vx-accent-ink);
+  border-radius: var(--vx-radius-sm);
+  min-height: var(--vx-control);
   padding: 10px 17px;
   display: inline-flex;
   justify-content: center;
   align-items: center;
   gap: 8px;
-  font-weight: 600;
+  font-weight: 650;
   font-size: 13px;
   transition:
-    background 0.15s,
-    box-shadow 0.15s;
+    background var(--vx-fast) var(--vx-ease),
+    border-color var(--vx-fast) var(--vx-ease),
+    color var(--vx-fast) var(--vx-ease),
+    box-shadow var(--vx-fast) var(--vx-ease);
 }
 button:hover {
-  background: #6451b7;
+  background: var(--vx-accent-hover);
+  border-color: var(--vx-accent-hover);
+}
+button:active:not(:disabled) {
+  filter: brightness(0.92);
 }
 button:disabled,
 .disabled {
   opacity: 0.5;
-  cursor: wait;
+  cursor: not-allowed;
 }
-button:focus-visible,
-a:focus-visible,
+:where(button, a, summary, input, select, textarea, [tabindex]):focus-visible,
 label.upload-button:focus-within {
-  outline: 3px solid #b8a3f5;
-  outline-offset: 3px;
+  outline: 2px solid var(--vx-accent);
+  outline-offset: 4px;
 }
 .secondary {
-  background: #fff;
-  border-color: #e3e2eb;
-  color: #514a67;
+  background: transparent;
+  border-color: var(--vx-border-strong);
+  color: var(--vx-text);
 }
 .secondary:hover {
-  background: #f1edf9;
+  background: var(--vx-accent-soft);
+  border-color: var(--vx-accent);
 }
 .text-button {
   background: transparent;
-  color: #7761bf;
-  min-height: 30px;
+  border-color: transparent;
+  color: var(--vx-accent);
+  min-height: 36px;
   padding: 3px 0;
   font-size: 12px;
 }
 .text-button:hover {
   background: transparent;
-  color: #4f378f;
+  border-color: transparent;
+  color: var(--vx-accent-hover);
+  text-decoration: underline;
+  text-underline-offset: 4px;
 }
 .icon-button {
   background: transparent;
-  min-width: 32px;
-  min-height: 32px;
-  padding: 6px;
-  color: #777185;
+  border-color: transparent;
+  min-width: var(--vx-control);
+  min-height: var(--vx-control);
+  padding: 8px;
+  color: var(--vx-text-2);
   flex-shrink: 0;
 }
 .icon-button:hover {
-  background: #f0edf7;
-  color: #6d53b5;
+  background: var(--vx-surface);
+  border-color: var(--vx-border-strong);
+  color: var(--vx-text);
 }
 input,
 textarea,
 select {
   width: 100%;
-  color: #2d2939;
-  background: #fff;
-  border: 1px solid #dfdce8;
-  border-radius: 7px;
+  min-width: 0;
+  min-height: var(--vx-control);
+  color: var(--vx-text);
+  background: var(--vx-bg);
+  border: 1px solid var(--vx-border-strong);
+  border-radius: var(--vx-radius-sm);
   padding: 11px 12px;
-  outline: none;
+  transition:
+    border-color var(--vx-fast),
+    box-shadow var(--vx-fast);
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--vx-muted);
+  opacity: 1;
 }
 input:focus,
 textarea:focus,
 select:focus {
-  border-color: #8d73db;
-  box-shadow: 0 0 0 3px #8d73db18;
+  border-color: var(--vx-accent);
+  box-shadow: var(--vx-focus);
 }
-input[readonly] {
-  background: #f7f6fa;
-  color: #7d778e;
+input[readonly],
+textarea[readonly] {
+  background: var(--vx-bg-2);
+  color: var(--vx-text-2);
 }
 textarea {
   resize: vertical;
@@ -123,14 +141,14 @@ textarea {
 label {
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  color: #514a61;
-  font-size: 12px;
-  font-weight: 600;
+  gap: 8px;
+  color: var(--vx-text-2);
+  font-size: 13px;
+  font-weight: 550;
 }
 label small {
   font-weight: 400;
-  color: #7b748a;
+  color: var(--vx-muted);
   line-height: 1.5;
 }
 form {
@@ -139,8 +157,11 @@ form {
   gap: 18px;
 }
 a {
-  color: #7961c3;
+  color: var(--vx-accent);
   text-decoration: none;
+}
+a:hover {
+  color: var(--vx-accent-hover);
 }
 h1,
 h2,
@@ -151,30 +172,33 @@ p {
 h1,
 h2,
 h3 {
-  font-weight: 600;
-  letter-spacing: -0.5px;
+  color: var(--vx-text);
+  font-weight: 650;
+  letter-spacing: -0.03em;
 }
 h1 {
-  font-size: 34px;
-  line-height: 1.2;
+  font-size: var(--vx-h1);
+  line-height: 1.15;
 }
 h2 {
-  font-size: 18px;
+  font-size: 19px;
+  line-height: 1.3;
 }
 h3 {
-  font-size: 15px;
+  font-size: 16px;
 }
 small {
-  font-size: 11px;
+  font-size: var(--vx-small);
 }
 p {
-  color: #898296;
+  color: var(--vx-text-2);
 }
 svg {
   flex-shrink: 0;
 }
 ::selection {
-  background: #ded4f8;
+  background: var(--vx-accent-border);
+  color: var(--vx-text);
 }
 .sr-only {
   position: absolute;
@@ -186,4 +210,27 @@ svg {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+.skip-link {
+  position: fixed;
+  left: 12px;
+  top: -80px;
+  z-index: 100;
+  padding: 12px 18px;
+  border-radius: var(--vx-radius-sm);
+  background: var(--vx-accent);
+  color: var(--vx-accent-ink);
+  font-weight: 650;
+}
+.skip-link:focus {
+  top: 12px;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
 }

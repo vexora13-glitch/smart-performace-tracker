@@ -1,6 +1,14 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { UPLOAD_ACCEPT, UPLOAD_HINT, UPLOAD_STATUS, uploadPrivate, type UploadState } from '../vexbot/uploads';
 import { ASK_EVENT } from '../vexbot/Vexbot';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { AnimatePresence, LayoutGroup, m, useReducedMotion } from 'motion/react';
+import { motionTokens } from '../design/motion-tokens';
+import {
+  UPLOAD_ACCEPT,
+  UPLOAD_HINT,
+  UPLOAD_STATUS,
+  uploadPrivate,
+  type UploadState,
+} from '../vexbot/uploads';
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -72,6 +80,15 @@ export function Workspace({
   const unreadCount = conversations.reduce((sum, row) => sum + unread(row.id, data, profile.id), 0);
   const [uploads, setUploads] = useState<UploadState[]>([]);
   const [sending, setSending] = useState(false);
+  const [category, setCategory] = useState('All files');
+  const reduced = useReducedMotion();
+  const visibleFiles = files.filter(
+    (file) =>
+      category === 'All files' ||
+      (category === 'Videos'
+        ? file.mime_type.startsWith('video/')
+        : !file.mime_type.startsWith('video/')),
+  );
   const loadUploads = useCallback(async () => {
     setUploads(
       unwrap(
@@ -223,7 +240,7 @@ export function Workspace({
         </div>
       )}
       <div className="workspace-grid">
-        <section className="panel files-panel">
+        <section className="panel files-panel" aria-busy={busy}>
           <div className="panel-heading">
             <div>
               <h2>
@@ -250,6 +267,34 @@ export function Workspace({
               PDF, Office, images, text, MP4 or WebM · up to 50 MB per file
             </p>
           )}
+          <LayoutGroup id="file-categories">
+            <div className="tabs file-tabs" aria-label="File categories">
+              {['All files', 'Documents', 'Videos'].map((item) => (
+                <button
+                  type="button"
+                  key={item}
+                  className={category === item ? 'selected' : ''}
+                  aria-pressed={category === item}
+                  onClick={() => setCategory(item)}
+                >
+                  {category === item && (
+                    <m.span
+                      className="tab-indicator"
+                      layoutId="file-category"
+                      aria-hidden="true"
+                      transition={reduced ? { duration: 0 } : motionTokens.spring}
+                    />
+                  )}
+                  {item}
+                </button>
+              ))}
+            </div>
+          </LayoutGroup>
+          {busy && (
+            <p className="file-hint" role="status">
+              Updating your workspace…
+            </p>
+          )}
           {files.length === 0 ? (
             <div className="empty">
               <FolderOpen size={30} />
@@ -262,70 +307,88 @@ export function Workspace({
             </div>
           ) : (
             <div className="files-list">
-              {files.map((file) => (
-                <div className="file-row" key={file.id}>
-                  <span className="file-icon">
-                    {file.mime_type.startsWith('video/') ? (
-                      <Play size={21} />
-                    ) : (
-                      <FileText size={21} />
-                    )}
-                  </span>
-                  <div className="row-copy">
-                    <strong>{file.name}</strong>
-                    <small>
-                      {(file.size_bytes / 1024 / 1024).toFixed(1)} MB ·{' '}
-                      {new Date(file.created_at).toLocaleDateString()}
-                    </small>
-                  </div>
-                  {file.mime_type.startsWith('video/') && (
-                    <button
-                      className="icon-button"
-                      aria-label={`Play ${file.name}`}
-                      onClick={() => openFile(file)}
-                    >
-                      <Play size={17} />
-                    </button>
-                  )}
-                  {READABLE.has(file.mime_type) && (
-                    <button
-                      className="icon-button"
-                      aria-label={`Ask Vexbot about ${file.name}`}
-                      title="Ask Vexbot about this file"
-                      data-testid="workspace-ask-vexbot"
-                      onClick={() =>
-                        window.dispatchEvent(
-                          new CustomEvent(ASK_EVENT, {
-                            detail: { workspace: client.id, question: `Summarize “${file.name}”` },
-                          }),
-                        )
-                      }
-                    >
-                      <MessageCircle size={17} />
-                    </button>
-                  )}
-                  <button
-                    className="icon-button"
-                    aria-label={`Download ${file.name}`}
-                    onClick={() => openFile(file, true)}
-                  >
-                    <Download size={17} />
-                  </button>
-                  {admin && (
-                    <button
-                      className="icon-button"
-                      aria-label={`Remove ${file.name}`}
-                      disabled={busy}
-                      onClick={() => {
-                        setRemoving(file);
-                        removeDialog.current?.showModal();
-                      }}
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  )}
+              {visibleFiles.length === 0 && (
+                <div className="empty compact">
+                  <FolderOpen size={24} />
+                  <p>No {category.toLowerCase()} shared yet.</p>
                 </div>
-              ))}
+              )}
+              <AnimatePresence initial={false}>
+                {visibleFiles.map((file) => (
+                  <m.div
+                    className="file-row"
+                    key={file.id}
+                    initial={reduced ? false : { opacity: 0, y: 4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: reduced ? 0 : motionTokens.micro }}
+                  >
+                    <span className="file-icon">
+                      {file.mime_type.startsWith('video/') ? (
+                        <Play size={21} />
+                      ) : (
+                        <FileText size={21} />
+                      )}
+                    </span>
+                    <div className="row-copy">
+                      <strong>{file.name}</strong>
+                      <small>
+                        {(file.size_bytes / 1024 / 1024).toFixed(1)} MB ·{' '}
+                        {new Date(file.created_at).toLocaleDateString()}
+                      </small>
+                    </div>
+                    {file.mime_type.startsWith('video/') && (
+                      <button
+                        className="icon-button"
+                        aria-label={`Play ${file.name}`}
+                        onClick={() => openFile(file)}
+                      >
+                        <Play size={17} />
+                      </button>
+                    )}
+                    {READABLE.has(file.mime_type) && (
+                      <button
+                        className="icon-button"
+                        aria-label={`Ask Vexbot about ${file.name}`}
+                        title="Ask Vexbot about this file"
+                        data-testid="workspace-ask-vexbot"
+                        onClick={() =>
+                          window.dispatchEvent(
+                            new CustomEvent(ASK_EVENT, {
+                              detail: {
+                                workspace: client.id,
+                                question: `Summarize “${file.name}”`,
+                              },
+                            }),
+                          )
+                        }
+                      >
+                        <MessageCircle size={17} />
+                      </button>
+                    )}
+                    <button
+                      className="icon-button"
+                      aria-label={`Download ${file.name}`}
+                      onClick={() => openFile(file, true)}
+                    >
+                      <Download size={17} />
+                    </button>
+                    {admin && (
+                      <button
+                        className="icon-button"
+                        aria-label={`Remove ${file.name}`}
+                        disabled={busy}
+                        onClick={() => {
+                          setRemoving(file);
+                          removeDialog.current?.showModal();
+                        }}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    )}
+                  </m.div>
+                ))}
+              </AnimatePresence>
             </div>
           )}
         </section>
@@ -350,7 +413,7 @@ export function Workspace({
           </button>
         </section>
       </div>
-      <section className="panel updates-panel" data-testid="workspace-uploads">
+      <section className="panel updates-panel" data-testid="workspace-uploads" aria-busy={sending}>
         <div className="panel-heading">
           <div>
             <h2>
@@ -378,7 +441,9 @@ export function Workspace({
           )}
         </div>
         {!admin && !readOnly && <p className="file-hint">{UPLOAD_HINT}</p>}
-        {readOnly && <p className="file-hint">Your access is read-only, so uploads are turned off.</p>}
+        {readOnly && (
+          <p className="file-hint">Your access is read-only, so uploads are turned off.</p>
+        )}
         {uploads.length === 0 ? (
           <div className="empty compact">
             <ShieldCheck size={24} />
@@ -416,19 +481,28 @@ export function Workspace({
             </button>
           )}
         </div>
-        {publishing && (
-          <form className="publish-form" onSubmit={publish}>
-            <label>
-              Update title
-              <input name="title" required maxLength={160} />
-            </label>
-            <label>
-              Message
-              <textarea name="body" required maxLength={10000} rows={5} />
-            </label>
-            <button disabled={busy}>Publish to client</button>
-          </form>
-        )}
+        <AnimatePresence initial={false}>
+          {publishing && (
+            <m.form
+              className="publish-form"
+              onSubmit={publish}
+              initial={reduced ? false : { opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: reduced ? 0 : motionTokens.component }}
+            >
+              <label>
+                Update title
+                <input name="title" required maxLength={160} />
+              </label>
+              <label>
+                Message
+                <textarea name="body" required maxLength={10000} rows={5} />
+              </label>
+              <button disabled={busy}>Publish to client</button>
+            </m.form>
+          )}
+        </AnimatePresence>
         {announcements.length === 0 ? (
           <div className="empty compact">
             <MessageSquare size={26} />
@@ -451,9 +525,14 @@ export function Workspace({
           ))
         )}
       </section>
-      <dialog className="video-dialog" ref={videoDialog} onClose={() => setVideo(null)}>
+      <dialog
+        className="video-dialog"
+        ref={videoDialog}
+        aria-labelledby="video-title"
+        onClose={() => setVideo(null)}
+      >
         <div className="panel-heading">
-          <h2>{video?.name}</h2>
+          <h2 id="video-title">{video?.name}</h2>
           <button
             className="icon-button"
             aria-label="Close video"
@@ -474,8 +553,12 @@ export function Workspace({
         )}
         <p>Playback links expire after one hour. Reopen the video to refresh.</p>
       </dialog>
-      <dialog ref={removeDialog} onCancel={() => setRemoving(null)}>
-        <h2>Remove shared file?</h2>
+      <dialog
+        ref={removeDialog}
+        aria-labelledby="remove-file-title"
+        onCancel={() => setRemoving(null)}
+      >
+        <h2 id="remove-file-title">Remove shared file?</h2>
         <p>“{removing?.name}” will be removed from this workspace and private storage.</p>
         <div className="button-row">
           <button

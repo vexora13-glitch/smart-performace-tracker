@@ -1,6 +1,8 @@
 import { useState, type FormEvent } from 'react';
 import { ArrowRight, Eye, EyeOff, LockKeyhole, ShieldCheck } from 'lucide-react';
 import { db, unwrap } from '../services/portal';
+import { VexoraBrand } from '../design/Brand';
+import { VexoraReveal } from '../design/motion';
 export function Login({ configured }: { configured: boolean }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -26,11 +28,8 @@ export function Login({ configured }: { configured: boolean }) {
   return (
     <div className="login-layout">
       <section className="login-story">
-        <a href="#" className="brand">
-          <span className="brand-mark">V</span>
-          <span>
-            vexora<span className="brand-dot">.</span>
-          </span>
+        <a href="https://vexoradigital.com" className="brand" aria-label="Vexora Digital website">
+          <VexoraBrand subtitle="DIGITAL" />
         </a>
         <div className="story-content">
           <div className="eyebrow">A SPACE TO MOVE FORWARD</div>
@@ -44,14 +43,14 @@ export function Login({ configured }: { configured: boolean }) {
             <br />
             One private space. A clearer way forward.
           </p>
-          <div className="story-orbit">
-            <span>V</span>
+          <div className="story-orbit" aria-hidden="true">
+            <img src="/brand/vexora-logo.png" alt="" />
           </div>
         </div>
         <span className="story-footer">A little clarity. A lot of possibility.</span>
       </section>
       <section className="login-form-area">
-        <div className="login-card">
+        <VexoraReveal className="login-card">
           <span className="login-icon">
             <LockKeyhole size={23} />
           </span>
@@ -114,7 +113,7 @@ export function Login({ configured }: { configured: boolean }) {
           <div className="login-security">
             <ShieldCheck size={15} /> A private space for you and Vexora.
           </div>
-        </div>
+        </VexoraReveal>
       </section>
     </div>
   );

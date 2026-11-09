@@ -22,7 +22,9 @@ export function ClientDialog({
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   useEffect(() => {
+    const trigger = document.activeElement as HTMLElement | null;
     dialog.current?.showModal();
+    return () => trigger?.focus();
   }, []);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -115,6 +117,7 @@ export function ClientDialog({
     <dialog
       ref={dialog}
       className="client-dialog"
+      aria-labelledby="client-dialog-title"
       onCancel={(event) => {
         if (busy) event.preventDefault();
       }}
@@ -123,7 +126,7 @@ export function ClientDialog({
       <div className="panel-heading">
         <div>
           <div className="eyebrow">CLIENT CONNECTIONS</div>
-          <h2>{client ? 'Manage client' : 'A new connection.'}</h2>
+          <h2 id="client-dialog-title">{client ? 'Manage client' : 'A new connection.'}</h2>
         </div>
         <button className="icon-button" aria-label="Close dialog" disabled={busy} onClick={onClose}>
           <X size={20} />
@@ -238,7 +241,16 @@ export function ClientDialog({
                       onChange={(event) =>
                         void member(
                           () =>
-                            api('clients', { id: row.user_id, workspace_id: client.id, action: 'member_access', access: event.target.value }, 'PATCH'),
+                            api(
+                              'clients',
+                              {
+                                id: row.user_id,
+                                workspace_id: client.id,
+                                action: 'member_access',
+                                access: event.target.value,
+                              },
+                              'PATCH',
+                            ),
                           'Access updated.',
                         )
                       }
@@ -253,7 +265,16 @@ export function ClientDialog({
                       onClick={() =>
                         void member(
                           () =>
-                            api('clients', { id: row.user_id, workspace_id: client.id, action: 'member_access', access: 'remove' }, 'PATCH'),
+                            api(
+                              'clients',
+                              {
+                                id: row.user_id,
+                                workspace_id: client.id,
+                                action: 'member_access',
+                                access: 'remove',
+                              },
+                              'PATCH',
+                            ),
                           'Member removed. Their access ended immediately.',
                         )
                       }
@@ -276,7 +297,14 @@ export function ClientDialog({
             </label>
             <label>
               Initial password
-              <input type="password" name="password" required minLength={12} maxLength={128} autoComplete="new-password" />
+              <input
+                type="password"
+                name="password"
+                required
+                minLength={12}
+                maxLength={128}
+                autoComplete="new-password"
+              />
             </label>
             <label>
               Access

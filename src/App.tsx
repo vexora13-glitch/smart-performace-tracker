@@ -1,4 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { LayoutGroup, m, useReducedMotion } from 'motion/react';
+import { VexoraBrand } from './design/Brand';
+import { VexoraPageTransition, VexoraReveal } from './design/motion';
+import { motionTokens } from './design/motion-tokens';
 import type { Session } from '@supabase/supabase-js';
 import {
   ArrowUpRight,
@@ -12,6 +16,10 @@ import {
   Search,
   ChevronRight,
   Bot,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Menu,
+  X,
 } from 'lucide-react';
 import { hasSupabaseConfig, supabase } from './lib/supabase';
 import { accessMap, db, loadPortal, unread, unwrap } from './services/portal';
@@ -36,6 +44,9 @@ export default function App() {
   const [dialog, setDialog] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [retry, setRetry] = useState(0);
+  const [collapsed, setCollapsed] = useState(false);
+  const mobileMenu = useRef<HTMLDialogElement>(null);
+  const reduced = useReducedMotion();
   useEffect(() => {
     if (!supabase) {
       setLoading(false);
@@ -82,9 +93,11 @@ export default function App() {
     setProfile(null);
     setData(emptyData);
     (async () => {
-      const own = (
-        await db().from('portal_profiles').select('*').eq('id', userId).maybeSingle()
-      ) as { data: Profile | null; error: { message: string } | null };
+      const own = (await db()
+        .from('portal_profiles')
+        .select('*')
+        .eq('id', userId)
+        .maybeSingle()) as { data: Profile | null; error: { message: string } | null };
       if (own.error) throw new Error(own.error.message);
       if (!own.data)
         throw new Error(
@@ -160,9 +173,10 @@ export default function App() {
   if (!hasSupabaseConfig) return <Login configured={false} />;
   if (loading)
     return (
-      <div className="loading">
+      <div className="loading" role="status" aria-live="polite">
         <span className="brand-mark">V</span>
         <p>Opening your workspace…</p>
+        <div className="loading-skeleton" aria-hidden="true" />
       </div>
     );
   if (!session) return <Login configured />;
@@ -196,55 +210,74 @@ export default function App() {
     `${row.company} ${row.email}`.toLowerCase().includes(search.toLowerCase()),
   );
   function navigate(next: Page) {
+    mobileMenu.current?.close();
     setPage(next);
     if (admin) setWorkspace(null);
     setSearch('');
   }
   return (
-    <div className="app-layout">
+    <div className={`app-layout ${collapsed ? 'is-collapsed' : ''}`}>
+      <a href="#portal-main" className="skip-link">
+        Skip to workspace
+      </a>
       <aside className="sidebar">
         <a
           className="brand"
+          aria-label="Vexora portal home"
           href="#"
           onClick={(event) => {
             event.preventDefault();
             navigate('Dashboard');
           }}
         >
-          <span className="brand-mark">V</span>
-          <span>
-            vexora<span className="brand-dot">.</span>
-            <small>CLIENT PORTAL</small>
-          </span>
+          <VexoraBrand />
         </a>
         <div className="nav-label">YOUR WORKSPACE</div>
-        <nav aria-label="Main navigation">
-          {(
-            ['Dashboard', ...(admin ? ['Clients'] : []), 'Messages', ...(admin ? ['Vexbot'] : [])] as Page[]
-          ).map((item) => {
-            const Icon =
-              item === 'Dashboard'
-                ? LayoutDashboard
-                : item === 'Clients'
-                  ? Users
-                  : item === 'Vexbot'
-                    ? Bot
-                    : MessageSquare;
-            return (
-              <button
-                key={item}
-                className={`nav-item ${page === item ? 'active' : ''}`}
-                onClick={() => navigate(item)}
-              >
-                <Icon size={19} />
-                {item}
-                {item === 'Messages' && totalUnread > 0 && (
-                  <span className="nav-count">{totalUnread}</span>
-                )}
-              </button>
-            );
-          })}
-        </nav>
+        <LayoutGroup id="portal-navigation">
+          <nav aria-label="Main navigation">
+            {(
+              [
+                'Dashboard',
+                ...(admin ? ['Clients'] : []),
+                'Messages',
+                ...(admin ? ['Vexbot'] : []),
+              ] as Page[]
+            ).map((item) => {
+              const Icon =
+                item === 'Dashboard'
+                  ? LayoutDashboard
+                  : item === 'Clients'
+                    ? Users
+                    : item === 'Vexbot'
+                      ? Bot
+                      : MessageSquare;
+              return (
+                <button
+                  key={item}
+                  className={`nav-item ${page === item ? 'active' : ''}`}
+                  aria-label={item}
+                  aria-current={page === item ? 'page' : undefined}
+                  title={item}
+                  onClick={() => navigate(item)}
+                >
+                  <Icon size={19} />
+                  <span className="nav-copy">{item}</span>
+                  {page === item && (
+                    <m.span
+                      className="nav-indicator"
+                      layoutId="active-navigation"
+                      aria-hidden="true"
+                      transition={reduced ? { duration: 0 } : motionTokens.spring}
+                    />
+                  )}
+                  {item === 'Messages' && totalUnread > 0 && (
+                    <span className="nav-count">{totalUnread}</span>
+                  )}
+                </button>
+              );
+            })}
+          </nav>
+        </LayoutGroup>
         {/* Empty on purpose: Vexbot's perch between the navigation and the account block. */}
         <div className="vexbot-perch" data-vexbot-perch aria-hidden="true" />
         <div className="sidebar-bottom">
@@ -258,7 +291,9 @@ export default function App() {
             <span className="avatar">{profile.display_name.slice(0, 1)}</span>
             <div>
               {profile.display_name}
-              <small>{admin ? 'Administrator' : readOnly ? 'Read-only access' : 'Client workspace'}</small>
+              <small>
+                {admin ? 'Administrator' : readOnly ? 'Read-only access' : 'Client workspace'}
+              </small>
             </div>
             <button aria-label="Sign out" className="icon-button" onClick={signOut}>
               <LogOut size={17} />
@@ -269,7 +304,24 @@ export default function App() {
       <div className="main-layout">
         <header className="topbar">
           <span>
-            Workspace <ChevronRight size={13} /> <strong>{client?.company || page}</strong>
+            <button
+              className="icon-button collapse-button"
+              aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              aria-expanded={!collapsed}
+              onClick={() => setCollapsed(!collapsed)}
+            >
+              {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+            </button>
+            <button
+              className="icon-button mobile-menu-button"
+              aria-label="Open navigation menu"
+              aria-haspopup="dialog"
+              onClick={() => mobileMenu.current?.showModal()}
+            >
+              <Menu size={19} />
+            </button>
+            <span className="breadcrumb-prefix">Workspace</span> <ChevronRight size={13} />{' '}
+            <strong>{client?.company || page}</strong>
           </span>
           <span className="topbar-right">
             {ownWorkspaces.length > 1 && (
@@ -302,7 +354,7 @@ export default function App() {
             </button>
           </span>
         </header>
-        <main>
+        <main id="portal-main" tabIndex={-1}>
           {error && (
             <div className="notice error" role="alert">
               {error}
@@ -311,247 +363,256 @@ export default function App() {
               </button>
             </div>
           )}
-          {admin && page === 'Vexbot' ? (
-            <VexbotAdmin clients={data.clients} profiles={data.profiles} />
-          ) : client && page !== 'Messages' ? (
-            <Workspace
-              key={client.id}
-              client={client}
-              profile={profile}
-              data={data}
-              readOnly={readOnly}
-              refresh={refresh}
-              onManage={() => setDialog(client.id)}
-              onMessages={() => setPage('Messages')}
-              onBack={admin ? () => setWorkspace(null) : undefined}
-            />
-          ) : page === 'Messages' ? (
-            <>
-              <div className="page-heading">
-                <div className="eyebrow">KEEP THE CONVERSATION GOING</div>
-                <h1>
-                  Messages<span className="purple-dot">.</span>
-                </h1>
-                <p>Questions, updates and the next steps. All in one place.</p>
-              </div>
-              <Chat
+          <VexoraPageTransition identity={`${page}:${client?.id ?? ''}`}>
+            {admin && page === 'Vexbot' ? (
+              <VexbotAdmin clients={data.clients} profiles={data.profiles} />
+            ) : client && page !== 'Messages' ? (
+              <Workspace
+                key={client.id}
+                client={client}
                 profile={profile}
                 data={data}
-                refresh={refresh}
-                workspaceId={workspace || undefined}
                 readOnly={readOnly}
+                refresh={refresh}
+                onManage={() => setDialog(client.id)}
+                onMessages={() => setPage('Messages')}
+                onBack={admin ? () => setWorkspace(null) : undefined}
               />
-            </>
-          ) : (
-            <>
-              <div className="page-heading heading-row">
-                <div>
-                  <div className="eyebrow">
-                    {page === 'Dashboard'
-                      ? 'A CLEAR VIEW OF WHAT’S NEXT'
-                      : 'GREAT WORK STARTS WITH CONNECTION'}
-                  </div>
+            ) : page === 'Messages' ? (
+              <>
+                <div className="page-heading">
+                  <div className="eyebrow">KEEP THE CONVERSATION GOING</div>
                   <h1>
-                    {page === 'Dashboard'
-                      ? `Welcome back, ${profile.display_name.split(' ')[0]}`
-                      : 'Your clients'}
-                    <span className="purple-dot">.</span>
+                    Messages<span className="purple-dot">.</span>
                   </h1>
-                  <p>
-                    {page === 'Dashboard'
-                      ? 'Your clients, conversations and shared work. Connected.'
-                      : 'Manage relationships and open a private client workspace.'}
-                  </p>
+                  <p>Questions, updates and the next steps. All in one place.</p>
                 </div>
-                {admin && (
-                  <button onClick={() => setDialog('new')}>
-                    <Plus size={17} />
-                    Add client
-                  </button>
-                )}
-              </div>
-              {page === 'Dashboard' && (
-                <>
-                  <section className="overview-strip">
-                    <div>
-                      <span className="stat-icon">
-                        <Users size={21} />
-                      </span>
-                      <div>
-                        <small>Total clients</small>
-                        <strong>{data.clients.length}</strong>
-                      </div>
+                <Chat
+                  profile={profile}
+                  data={data}
+                  refresh={refresh}
+                  workspaceId={workspace || undefined}
+                  readOnly={readOnly}
+                />
+              </>
+            ) : (
+              <>
+                <div className="page-heading heading-row">
+                  <div>
+                    <div className="eyebrow">
+                      {page === 'Dashboard'
+                        ? 'A CLEAR VIEW OF WHAT’S NEXT'
+                        : 'GREAT WORK STARTS WITH CONNECTION'}
                     </div>
-                    <div>
-                      <span className="stat-icon">
-                        <MessageSquare size={21} />
-                      </span>
-                      <div>
-                        <small>Unread messages</small>
-                        <strong>{totalUnread.toString().padStart(2, '0')}</strong>
-                      </div>
-                    </div>
-                    <div>
-                      <span className="stat-icon">
-                        <ShieldCheck size={21} />
-                      </span>
-                      <div>
-                        <small>Active workspaces</small>
-                        <strong>
-                          {data.clients
-                            .filter((c) => data.profiles.find((p) => p.id === c.id)?.active)
-                            .length.toString()
-                            .padStart(2, '0')}
-                        </strong>
-                      </div>
-                    </div>
-                    <span className="overview-caption">
-                      Good things happen
-                      <br />
-                      when we stay connected.
-                    </span>
-                  </section>
-                  <section className="welcome-banner">
-                    <div className="eyebrow">BUILT AROUND YOUR CLIENTS</div>
-                    <h2>
-                      A little clarity.
-                      <br />A lot of possibility.
-                    </h2>
+                    <h1>
+                      {page === 'Dashboard'
+                        ? `Welcome back, ${profile.display_name.split(' ')[0]}`
+                        : 'Your clients'}
+                      <span className="purple-dot">.</span>
+                    </h1>
                     <p>
-                      Everything your clients need,
-                      <br />
-                      with a direct line to you.
+                      {page === 'Dashboard'
+                        ? 'Your clients, conversations and shared work. Connected.'
+                        : 'Manage relationships and open a private client workspace.'}
                     </p>
-                    <div className="orb orb-one" />
-                    <div className="orb orb-two" />
-                    <span className="banner-tag">
-                      <span className="status-dot" /> Your client hub
-                    </span>
-                  </section>
-                </>
-              )}
-              <div className={page === 'Dashboard' ? 'dashboard-panels' : ''}>
-                <section className="panel">
-                  <div className="panel-heading">
-                    <div>
-                      <h2>
-                        Clients <span className="count">{data.clients.length}</span>
-                      </h2>
-                      <p>A workspace for every relationship.</p>
-                    </div>
-                    {page === 'Dashboard' && (
-                      <button className="text-button" onClick={() => navigate('Clients')}>
-                        View all <ArrowUpRight size={15} />
-                      </button>
-                    )}
                   </div>
-                  <label className="search-field">
-                    <Search size={16} />
-                    <input
-                      aria-label="Search clients"
-                      placeholder="Search clients…"
-                      value={search}
-                      onChange={(event) => setSearch(event.target.value)}
-                    />
-                  </label>
-                  <div className="client-list">
-                    {clients.length === 0 ? (
-                      <div className="empty">
-                        <Users size={27} />
-                        <h3>{search ? 'No matching clients' : 'Meet your first client'}</h3>
-                        <p>
-                          {search
-                            ? 'Try another company or email.'
-                            : 'Add a client to give them a secure home for shared work.'}
-                        </p>
-                        {!search && (
-                          <button onClick={() => setDialog('new')}>
-                            <Plus size={16} />
-                            Add client
-                          </button>
-                        )}
-                      </div>
-                    ) : (
-                      clients.slice(0, page === 'Dashboard' ? 5 : undefined).map((row) => (
-                        <button
-                          className="client-row"
-                          key={row.id}
-                          onClick={() => {
-                            setWorkspace(row.id);
-                            setPage('Clients');
-                          }}
-                        >
-                          <span className="avatar client-avatar">
-                            {row.company.slice(0, 2).toUpperCase()}
-                          </span>
-                          <span className="row-copy">
-                            <strong>{row.company}</strong>
-                            <small>{row.email}</small>
-                          </span>
-                          <span
-                            className={`pill ${data.profiles.find((p) => p.id === row.id)?.active ? '' : 'muted'}`}
-                          >
-                            {data.profiles.find((p) => p.id === row.id)?.active
-                              ? 'Active'
-                              : 'Inactive'}
-                          </span>
-                          <ChevronRight size={17} />
-                        </button>
-                      ))
-                    )}
-                  </div>
-                </section>
+                  {admin && (
+                    <button onClick={() => setDialog('new')}>
+                      <Plus size={17} />
+                      Add client
+                    </button>
+                  )}
+                </div>
                 {page === 'Dashboard' && (
+                  <>
+                    <VexoraReveal>
+                      <section className="overview-strip" aria-label="Workspace overview">
+                        <div>
+                          <span className="stat-icon">
+                            <Users size={21} />
+                          </span>
+                          <div>
+                            <small>Total clients</small>
+                            <strong>{data.clients.length}</strong>
+                          </div>
+                        </div>
+                        <div>
+                          <span className="stat-icon">
+                            <MessageSquare size={21} />
+                          </span>
+                          <div>
+                            <small>Unread messages</small>
+                            <strong>{totalUnread.toString().padStart(2, '0')}</strong>
+                          </div>
+                        </div>
+                        <div>
+                          <span className="stat-icon">
+                            <ShieldCheck size={21} />
+                          </span>
+                          <div>
+                            <small>Active workspaces</small>
+                            <strong>
+                              {data.clients
+                                .filter((c) => data.profiles.find((p) => p.id === c.id)?.active)
+                                .length.toString()
+                                .padStart(2, '0')}
+                            </strong>
+                          </div>
+                        </div>
+                        <span className="overview-caption">
+                          Good things happen
+                          <br />
+                          when we stay connected.
+                        </span>
+                      </section>
+                    </VexoraReveal>
+                    <VexoraReveal delay={0.04}>
+                      <section className="welcome-banner">
+                        <div className="eyebrow">BUILT AROUND YOUR CLIENTS</div>
+                        <h2>
+                          A little clarity.
+                          <br />A lot of possibility.
+                        </h2>
+                        <p>
+                          Everything your clients need,
+                          <br />
+                          with a direct line to you.
+                        </p>
+                        <div className="orb orb-one" aria-hidden="true" />
+                        <div className="orb orb-two" aria-hidden="true" />
+                        <span className="banner-tag">
+                          <span className="status-dot" /> Your client hub
+                        </span>
+                      </section>
+                    </VexoraReveal>
+                  </>
+                )}
+                <div className={page === 'Dashboard' ? 'dashboard-panels' : ''}>
                   <section className="panel">
                     <div className="panel-heading">
                       <div>
                         <h2>
-                          Messages {totalUnread > 0 && <span className="count">{totalUnread}</span>}
+                          Clients <span className="count">{data.clients.length}</span>
                         </h2>
-                        <p>A direct line to your clients.</p>
+                        <p>A workspace for every relationship.</p>
                       </div>
-                      <button className="text-button" onClick={() => navigate('Messages')}>
-                        Inbox <ArrowUpRight size={15} />
-                      </button>
-                    </div>
-                    {data.conversations.length === 0 ? (
-                      <div className="empty">
-                        <MessageSquare size={27} />
-                        <h3>Room for a conversation</h3>
-                        <p>Client questions and your replies will appear here.</p>
-                      </div>
-                    ) : (
-                      data.conversations.slice(0, 4).map((row) => (
-                        <button
-                          className="conversation-preview"
-                          key={row.id}
-                          onClick={() => {
-                            setWorkspace(row.workspace_id);
-                            setPage('Messages');
-                          }}
-                        >
-                          <span className="avatar">
-                            {data.clients
-                              .find((c) => c.id === row.workspace_id)
-                              ?.company.slice(0, 1)}
-                          </span>
-                          <span className="row-copy">
-                            <strong>{row.subject}</strong>
-                            <small>
-                              {data.clients.find((c) => c.id === row.workspace_id)?.company}
-                              {row.archived_at ? ' · Archived' : ''}
-                            </small>
-                          </span>
-                          {unread(row.id, data, profile.id) > 0 && <span className="unread-dot" />}
-                          <ChevronRight size={16} />
+                      {page === 'Dashboard' && (
+                        <button className="text-button" onClick={() => navigate('Clients')}>
+                          View all <ArrowUpRight size={15} />
                         </button>
-                      ))
-                    )}
+                      )}
+                    </div>
+                    <label className="search-field">
+                      <Search size={16} />
+                      <input
+                        aria-label="Search clients"
+                        placeholder="Search clients…"
+                        value={search}
+                        onChange={(event) => setSearch(event.target.value)}
+                      />
+                    </label>
+                    <div className="client-list">
+                      {clients.length === 0 ? (
+                        <div className="empty">
+                          <Users size={27} />
+                          <h3>{search ? 'No matching clients' : 'Meet your first client'}</h3>
+                          <p>
+                            {search
+                              ? 'Try another company or email.'
+                              : 'Add a client to give them a secure home for shared work.'}
+                          </p>
+                          {!search && (
+                            <button onClick={() => setDialog('new')}>
+                              <Plus size={16} />
+                              Add client
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        clients.slice(0, page === 'Dashboard' ? 5 : undefined).map((row) => (
+                          <button
+                            className="client-row"
+                            key={row.id}
+                            onClick={() => {
+                              setWorkspace(row.id);
+                              setPage('Clients');
+                            }}
+                          >
+                            <span className="avatar client-avatar">
+                              {row.company.slice(0, 2).toUpperCase()}
+                            </span>
+                            <span className="row-copy">
+                              <strong>{row.company}</strong>
+                              <small>{row.email}</small>
+                            </span>
+                            <span
+                              className={`pill ${data.profiles.find((p) => p.id === row.id)?.active ? '' : 'muted'}`}
+                            >
+                              {data.profiles.find((p) => p.id === row.id)?.active
+                                ? 'Active'
+                                : 'Inactive'}
+                            </span>
+                            <ChevronRight size={17} />
+                          </button>
+                        ))
+                      )}
+                    </div>
                   </section>
-                )}
-              </div>
-            </>
-          )}
+                  {page === 'Dashboard' && (
+                    <section className="panel">
+                      <div className="panel-heading">
+                        <div>
+                          <h2>
+                            Messages{' '}
+                            {totalUnread > 0 && <span className="count">{totalUnread}</span>}
+                          </h2>
+                          <p>A direct line to your clients.</p>
+                        </div>
+                        <button className="text-button" onClick={() => navigate('Messages')}>
+                          Inbox <ArrowUpRight size={15} />
+                        </button>
+                      </div>
+                      {data.conversations.length === 0 ? (
+                        <div className="empty">
+                          <MessageSquare size={27} />
+                          <h3>Room for a conversation</h3>
+                          <p>Client questions and your replies will appear here.</p>
+                        </div>
+                      ) : (
+                        data.conversations.slice(0, 4).map((row) => (
+                          <button
+                            className="conversation-preview"
+                            key={row.id}
+                            onClick={() => {
+                              setWorkspace(row.workspace_id);
+                              setPage('Messages');
+                            }}
+                          >
+                            <span className="avatar">
+                              {data.clients
+                                .find((c) => c.id === row.workspace_id)
+                                ?.company.slice(0, 1)}
+                            </span>
+                            <span className="row-copy">
+                              <strong>{row.subject}</strong>
+                              <small>
+                                {data.clients.find((c) => c.id === row.workspace_id)?.company}
+                                {row.archived_at ? ' · Archived' : ''}
+                              </small>
+                            </span>
+                            {unread(row.id, data, profile.id) > 0 && (
+                              <span className="unread-dot" />
+                            )}
+                            <ChevronRight size={16} />
+                          </button>
+                        ))
+                      )}
+                    </section>
+                  )}
+                </div>
+              </>
+            )}
+          </VexoraPageTransition>
           <footer>
             <span>
               VEXORA <span className="footer-dot">/</span> Built for better connections.
@@ -560,6 +621,41 @@ export default function App() {
           </footer>
         </main>
       </div>
+      <dialog
+        ref={mobileMenu}
+        className="mobile-navigation"
+        aria-labelledby="mobile-navigation-title"
+      >
+        <div className="panel-heading">
+          <h2 id="mobile-navigation-title">Your workspace</h2>
+          <button
+            className="icon-button"
+            aria-label="Close navigation menu"
+            onClick={() => mobileMenu.current?.close()}
+          >
+            <X size={20} />
+          </button>
+        </div>
+        <nav aria-label="Mobile navigation">
+          {(
+            [
+              'Dashboard',
+              ...(admin ? ['Clients'] : []),
+              'Messages',
+              ...(admin ? ['Vexbot'] : []),
+            ] as Page[]
+          ).map((item) => (
+            <button
+              key={item}
+              className="secondary"
+              aria-current={page === item ? 'page' : undefined}
+              onClick={() => navigate(item)}
+            >
+              {item}
+            </button>
+          ))}
+        </nav>
+      </dialog>
       {dialog && (
         <ClientDialog
           client={data.clients.find((c) => c.id === dialog)}

@@ -1,4 +1,7 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { AnimatePresence, LayoutGroup, m, useReducedMotion } from 'motion/react';
+import { VexoraPageTransition } from '../design/motion';
+import { motionTokens } from '../design/motion-tokens';
 import { Archive, CheckCheck, MessageSquare, Plus, Send } from 'lucide-react';
 import { api, db, unread, unwrap } from '../services/portal';
 import type { PortalData, Profile } from '../types/portal';
@@ -24,6 +27,11 @@ export function Chat({
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [draft, setDraft] = useState('');
+  const log = useRef<HTMLDivElement>(null);
+  const followBottom = useRef(true);
+  const previousThread = useRef<string | null>(null);
+  const [newMessages, setNewMessages] = useState(false);
+  const reduced = useReducedMotion();
   const conversation = data.conversations.find((row) => row.id === selected);
   const rows = data.conversations.filter(
     (row) => (!workspaceId || row.workspace_id === workspaceId) && !!row.archived_at === archived,
@@ -33,6 +41,22 @@ export function Chat({
     .filter((row) => row.author_id !== profile.id)
     .map((row) => row.id)
     .join(',');
+  const latestMessage = messages.at(-1)?.id;
+  useEffect(() => {
+    const changed = previousThread.current !== selected;
+    previousThread.current = selected;
+    if (changed) {
+      followBottom.current = true;
+      setNewMessages(false);
+    }
+    if (followBottom.current) {
+      const frame = requestAnimationFrame(() =>
+        log.current?.scrollTo({ top: log.current.scrollHeight, behavior: 'instant' }),
+      );
+      return () => cancelAnimationFrame(frame);
+    }
+    if (latestMessage) setNewMessages(true);
+  }, [selected, latestMessage]);
   useEffect(() => {
     setSelected(null);
     setComposing(false);
@@ -86,6 +110,7 @@ export function Chat({
       setComposing(false);
       setArchived(false);
       setDraft('');
+      followBottom.current = true;
       await refresh();
       await notify(result[0].message_id);
     } catch (error) {
@@ -110,6 +135,7 @@ export function Chat({
           .single(),
       );
       setDraft('');
+      followBottom.current = true;
       await refresh();
       await notify(row.id);
     } catch (error) {
@@ -173,28 +199,48 @@ export function Chat({
               <Plus size={20} />
             </button>
           </div>
-          <div className="tabs">
-            <button
-              className={!archived ? 'selected' : ''}
-              onClick={() => {
-                setArchived(false);
-                setSelected(null);
-                setComposing(false);
-              }}
-            >
-              Active
-            </button>
-            <button
-              className={archived ? 'selected' : ''}
-              onClick={() => {
-                setArchived(true);
-                setSelected(null);
-                setComposing(false);
-              }}
-            >
-              Archived
-            </button>
-          </div>
+          <LayoutGroup id="conversation-filters">
+            <div className="tabs" aria-label="Conversation filters">
+              <button
+                className={!archived ? 'selected' : ''}
+                aria-pressed={!archived}
+                onClick={() => {
+                  setArchived(false);
+                  setSelected(null);
+                  setComposing(false);
+                }}
+              >
+                {!archived && (
+                  <m.span
+                    className="tab-indicator"
+                    layoutId="conversation-filter"
+                    aria-hidden="true"
+                    transition={reduced ? { duration: 0 } : motionTokens.spring}
+                  />
+                )}
+                Active
+              </button>
+              <button
+                className={archived ? 'selected' : ''}
+                aria-pressed={archived}
+                onClick={() => {
+                  setArchived(true);
+                  setSelected(null);
+                  setComposing(false);
+                }}
+              >
+                {archived && (
+                  <m.span
+                    className="tab-indicator"
+                    layoutId="conversation-filter"
+                    aria-hidden="true"
+                    transition={reduced ? { duration: 0 } : motionTokens.spring}
+                  />
+                )}
+                Archived
+              </button>
+            </div>
+          </LayoutGroup>
           {rows.length === 0 && (
             <div className="empty compact">
               <MessageSquare size={23} />
@@ -228,7 +274,10 @@ export function Chat({
             </button>
           ))}
         </aside>
-        <div className="chat-content">
+        <VexoraPageTransition
+          identity={composing ? 'compose' : (selected ?? 'empty')}
+          className="chat-content"
+        >
           {composing ? (
             <form className="new-conversation" onSubmit={create}>
               <div className="eyebrow">A DIRECT CONNECTION</div>
@@ -289,31 +338,69 @@ export function Chat({
                   </button>
                 )}
               </div>
-              <div className="message-history" role="log" aria-label="Conversation messages">
+              <div
+                ref={log}
+                className="message-history"
+                role="log"
+                aria-live="polite"
+                aria-label="Conversation messages"
+                tabIndex={0}
+                onScroll={() => {
+                  const element = log.current;
+                  if (element) {
+                    followBottom.current =
+                      element.scrollHeight - element.scrollTop - element.clientHeight < 64;
+                    if (followBottom.current) setNewMessages(false);
+                  }
+                }}
+              >
                 {messages.length === 0 && <p>No messages yet. Send the first one below.</p>}
-                {messages.map((row) => {
-                  const own = row.author_id === profile.id;
-                  return (
-                    <article className={`message ${own ? 'own' : ''}`} key={row.id}>
-                      <small>
-                        {own
-                          ? 'You'
-                          : row.author_id === conversation.workspace_id
-                            ? 'Client'
-                            : 'Vexora'}{' '}
-                        · {new Date(row.created_at).toLocaleString()}
-                      </small>
-                      <p>{row.body}</p>
-                      {own && (
-                        <span className="read-receipt">
-                          <CheckCheck size={13} />
-                          {receipt >= row.created_at ? 'Read' : 'Sent'}
-                        </span>
-                      )}
-                    </article>
-                  );
-                })}
+                <AnimatePresence key={selected} initial={false}>
+                  {messages.map((row) => {
+                    const own = row.author_id === profile.id;
+                    return (
+                      <m.article
+                        className={`message ${own ? 'own' : ''}`}
+                        key={row.id}
+                        initial={reduced ? false : { opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: reduced ? 0 : motionTokens.micro }}
+                      >
+                        <small>
+                          {own
+                            ? 'You'
+                            : row.author_id === conversation.workspace_id
+                              ? 'Client'
+                              : 'Vexora'}{' '}
+                          · {new Date(row.created_at).toLocaleString()}
+                        </small>
+                        <p>{row.body}</p>
+                        {own && (
+                          <span className="read-receipt">
+                            <CheckCheck size={13} />
+                            {receipt >= row.created_at ? 'Read' : 'Sent'}
+                          </span>
+                        )}
+                      </m.article>
+                    );
+                  })}
+                </AnimatePresence>
               </div>
+              {newMessages && (
+                <button
+                  className="text-button latest-messages"
+                  onClick={() => {
+                    followBottom.current = true;
+                    log.current?.scrollTo({
+                      top: log.current.scrollHeight,
+                      behavior: reduced ? 'instant' : 'smooth',
+                    });
+                    setNewMessages(false);
+                  }}
+                >
+                  New messages · Jump to latest
+                </button>
+              )}
               {conversation.archived_at ? (
                 <div className="archived-note">
                   <Archive size={16} />
@@ -363,7 +450,7 @@ export function Chat({
               )}
             </div>
           )}
-        </div>
+        </VexoraPageTransition>
       </section>
     </>
   );
