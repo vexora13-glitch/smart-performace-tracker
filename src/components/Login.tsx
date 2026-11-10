@@ -113,6 +113,11 @@ export function Login({ configured }: { configured: boolean }) {
           <div className="login-security">
             <ShieldCheck size={15} /> A private space for you and Vexora.
           </div>
+          <p className="activity-privacy">
+            Relevant portal activity and VexBot conversations, available voice transcripts and
+            summaries are recorded for authorised Vexora administrators. Raw microphone audio is not
+            stored by the portal.
+          </p>
         </VexoraReveal>
       </section>
     </div>

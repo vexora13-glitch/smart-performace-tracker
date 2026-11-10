@@ -1,5 +1,6 @@
 import { AnimatePresence, m, useReducedMotion } from 'motion/react';
 import { motionTokens } from '../design/motion-tokens';
+import { completeVexbot } from '../services/activity';
 // The portal's Vexbot. The robot, its stage loop, director, flight, reduced motion, "Keep still" and "Hide
 // robot" are the public website's companion (src/components/companion/companion.tsx), ported with the
 // portal's sidebar perch. The panel is the portal's own: workspace-scoped, grounded chat with history,
@@ -631,6 +632,7 @@ export function Vexbot({
   }, []);
 
   function chooseWorkspace(target: string | null) {
+    completeVexbot(conversationRef.current);
     if (talkActive.current) endTalk();
     cancelInteraction();
     followBottom.current = true;
@@ -674,6 +676,7 @@ export function Vexbot({
   }
 
   function closePanel() {
+    completeVexbot(conversationRef.current);
     endTalk();
     cancelInteraction();
     setOpen(false);
@@ -710,6 +713,7 @@ export function Vexbot({
   }
 
   function newChat() {
+    completeVexbot(conversationRef.current);
     cancelInteraction();
     followBottom.current = true;
     conversationRef.current = null;
@@ -753,7 +757,7 @@ export function Vexbot({
     }
   }
 
-  async function send(text: string, spoken = false) {
+  async function send(text: string, spoken = false, userMessageId?: string) {
     if (chosen === undefined || sending.current) return;
     sending.current = true;
     const epoch = operation.current;
@@ -776,16 +780,26 @@ export function Vexbot({
     let incoming = '';
     let frame = 0;
     try {
-      const result = await streamQuestion<{ conversation: Summary; messages: VexMessage[] }>({
-        action: 'ask',
-        workspace_id: chosen,
-        conversation_id: conversationRef.current,
-        question: text,
-        attachments: ready.map((row) => row.id),
-      }, controller.signal, text => {
-        incoming += text;
-        if (!frame) frame = requestAnimationFrame(() => { frame = 0; if (epoch === operation.current) setPartial(incoming); });
-      });
+      const result = await streamQuestion<{ conversation: Summary; messages: VexMessage[] }>(
+        {
+          action: 'ask',
+          workspace_id: chosen,
+          conversation_id: conversationRef.current,
+          question: text,
+          medium: spoken ? 'voice' : 'text',
+          user_message_id: userMessageId,
+          attachments: ready.map((row) => row.id),
+        },
+        controller.signal,
+        (text) => {
+          incoming += text;
+          if (!frame)
+            frame = requestAnimationFrame(() => {
+              frame = 0;
+              if (epoch === operation.current) setPartial(incoming);
+            });
+        },
+      );
       if (epoch !== operation.current) return;
       conversationRef.current = result.conversation.id;
       setConversation(result.conversation.id);
@@ -804,15 +818,19 @@ export function Vexbot({
       setStatus('idle');
     } finally {
       cancelAnimationFrame(frame);
-      if (epoch === operation.current) { sending.current = false; setPartial(''); textRequest.current = null; }
+      if (epoch === operation.current) {
+        sending.current = false;
+        setPartial('');
+        textRequest.current = null;
+      }
     }
   }
 
-  function ask(text: string, spoken = false) {
+  function ask(text: string, spoken = false, userMessageId?: string) {
     const clean = text.trim();
     if (!clean || status === 'thinking' || uploading) return;
     setQuestion('');
-    void send(clean, spoken);
+    void send(clean, spoken, userMessageId);
   }
 
   function onSubmit(event: FormEvent) {
@@ -865,9 +883,11 @@ export function Vexbot({
       recorder.current = null;
       try {
         if (!clip.size) throw new Error("I didn't hear anything. You can try again or type.");
-        const { text } = await api('vexbot', {
+        const { text, conversation_id, user_message_id } = await api('vexbot', {
           action: 'transcribe',
           workspace_id: chosen,
+          conversation_id: conversationRef.current,
+          persist: true,
           mime: clip.type || turn.mime,
           audio: await blobToBase64(clip),
         });
@@ -877,7 +897,11 @@ export function Vexbot({
           setNotice("I didn't catch that. You can try again or type.");
           return;
         }
-        ask(text, true);
+        if (conversation_id) {
+          conversationRef.current = conversation_id;
+          setConversation(conversation_id);
+        }
+        ask(text, true, user_message_id);
       } catch (error) {
         if (epoch !== operation.current) return;
         setVoice('idle');
@@ -923,6 +947,7 @@ export function Vexbot({
   }
 
   function endTalk(message = '') {
+    if (talkActive.current) completeVexbot(conversationRef.current);
     const ending = liveSession.current?.close();
     liveSession.current = null;
     talkRun.current++;
@@ -1124,15 +1149,22 @@ export function Vexbot({
       quiet = 0;
       setTalk('transcribing');
       let text = '';
+      let savedMessage: string | undefined;
       try {
-        text = (
-          await api('vexbot', {
-            action: 'transcribe',
-            workspace_id: target,
-            mime: clip.type || mic.mime,
-            audio: await blobToBase64(clip),
-          })
-        ).text;
+        const transcript = await api('vexbot', {
+          action: 'transcribe',
+          workspace_id: target,
+          conversation_id: conversationRef.current,
+          persist: true,
+          mime: clip.type || mic.mime,
+          audio: await blobToBase64(clip),
+        });
+        text = transcript.text;
+        if (live() && transcript.conversation_id) {
+          conversationRef.current = transcript.conversation_id;
+          setConversation(transcript.conversation_id);
+          savedMessage = transcript.user_message_id;
+        }
       } catch (error) {
         if (live()) endTalk(`${(error as Error).message} Retry Talk or use Ask for text.`);
         return;
@@ -1155,6 +1187,8 @@ export function Vexbot({
           question: text,
           attachments: [],
           speak: true,
+          medium: 'voice',
+          user_message_id: savedMessage,
         });
       } catch (error) {
         if (live()) endTalk(`${(error as Error).message} Retry Talk or use Ask for text.`);
@@ -1760,8 +1794,15 @@ export function Vexbot({
                   ))}
                 </AnimatePresence>
                 {busy && (
-                  <div className={`vexbot-message assistant ${partial ? '' : 'thinking'}`} aria-busy="true">
-                    {partial || <><Loader2 size={16} className="spin" /> Reading your workspace…</>}
+                  <div
+                    className={`vexbot-message assistant ${partial ? '' : 'thinking'}`}
+                    aria-busy="true"
+                  >
+                    {partial || (
+                      <>
+                        <Loader2 size={16} className="spin" /> Reading your workspace…
+                      </>
+                    )}
                   </div>
                 )}
               </div>
@@ -1770,7 +1811,22 @@ export function Vexbot({
             <p className="vexbot-status" role="status" data-testid="vexbot-status">
               {notice || statusText}
             </p>
-            {busy && <button type="button" className="vexbot-play" onClick={() => { setQuestion(messages.findLast(message => message.pending && message.role === 'user')?.content ?? ''); cancelInteraction(); setNotice('Reply stopped. You can ask again.'); }}><Square size={14} /> Stop response</button>}
+            {busy && (
+              <button
+                type="button"
+                className="vexbot-play"
+                onClick={() => {
+                  setQuestion(
+                    messages.findLast((message) => message.pending && message.role === 'user')
+                      ?.content ?? '',
+                  );
+                  cancelInteraction();
+                  setNotice('Reply stopped. You can ask again.');
+                }}
+              >
+                <Square size={14} /> Stop response
+              </button>
+            )}
 
             {!needsWorkspace && (
               <form className="vexbot-composer" onSubmit={onSubmit}>
@@ -1972,8 +2028,11 @@ export function Vexbot({
             <p className="vexbot-disclosure">
               AI assistant. It answers only from information Vexora has approved and cites its
               sources; the team confirms anything important.
+              {
+                ' Conversations and available transcripts are saved for authorised Vexora administrators.'
+              }
               {service?.realtime?.available
-                ? ' Live voice streams microphone audio to OpenAI while connected. You can interrupt, mute or end at any time. Text transcripts and sources stay in your conversation; microphone recordings are not stored by the portal.'
+                ? ' Live voice streams microphone audio to OpenAI while connected. You can interrupt, mute or end at any time. Conversations, available transcripts and summaries are saved for authorised Vexora administrators. Microphone recordings are not stored by the portal.'
                 : voiceOn
                   ? ' Recorded voice works one question at a time and may use a different voice from the website. Recordings go to the AI provider for transcription and are not stored by the portal.'
                   : ''}

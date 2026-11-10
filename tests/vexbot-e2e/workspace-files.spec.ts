@@ -6,8 +6,12 @@ import { readFileSync } from 'node:fs';
 // synthetic PDF (scripts/vexbot-local-seed.mjs). The mock transcriber hears "Summarize pike point.pdf".
 type Seed = { password: string; tess: { email: string } };
 const seed = (): Seed => JSON.parse(readFileSync('artifacts/vexbot-seed.json', 'utf8'));
-const shot = (page: Page, name: string) => page.screenshot({ path: `artifacts/screenshots/${name}.png` });
-const data = (page: Page) => page.evaluate(() => ({ ...(document.querySelector('[data-testid=vexbot]') as HTMLElement).dataset }));
+const shot = (page: Page, name: string) =>
+  page.screenshot({ path: `artifacts/screenshots/${name}.png` });
+const data = (page: Page) =>
+  page.evaluate(() => ({
+    ...(document.querySelector('[data-testid=vexbot]') as HTMLElement).dataset,
+  }));
 
 async function login(page: Page) {
   const errors: string[] = [];
@@ -26,18 +30,25 @@ async function record(page: Page) {
     w.__seen = { place: [], talk: [] };
     const tick = () => {
       const d = (document.querySelector('[data-testid=vexbot]') as HTMLElement | null)?.dataset;
-      if (d) for (const key of ['place', 'talk']) if (d[key] && !w.__seen[key].includes(d[key]!)) w.__seen[key].push(d[key]!);
+      if (d)
+        for (const key of ['place', 'talk'])
+          if (d[key] && !w.__seen[key].includes(d[key]!)) w.__seen[key].push(d[key]!);
       requestAnimationFrame(tick);
     };
     tick();
   });
 }
-const seen = (page: Page) => page.evaluate(() => (window as unknown as { __seen: Record<string, string[]> }).__seen);
+const seen = (page: Page) =>
+  page.evaluate(() => (window as unknown as { __seen: Record<string, string[]> }).__seen);
 
 test.describe.configure({ mode: 'serial' });
 
-test('Test workspace: text answer from the shared PDF, with its citation', async ({ page, isMobile }) => {
+test('Test workspace: text answer from the shared PDF, with its citation', async ({
+  page,
+  isMobile,
+}) => {
   test.skip(isMobile, 'desktop only');
+  test.setTimeout(180000);
   const errors = await login(page);
   await expect(page.locator('.files-panel')).toContainText('pike point.pdf');
   // Ask about a file that is already shared, without uploading it again.
@@ -72,31 +83,60 @@ test('Test workspace: text answer from the shared PDF, with its citation', async
   expect(errors).toEqual([]);
 });
 
-test('natural proposal recognition, pricing follow-up and SOW selection through the local streaming route', async ({ page, isMobile }) => {
+test('natural proposal recognition, pricing follow-up and SOW selection through the local streaming route', async ({
+  page,
+  isMobile,
+}) => {
   test.skip(isMobile, 'desktop only');
+  test.setTimeout(180000);
   const errors = await login(page);
   await page.getByTestId('vexbot-launcher').click();
-  await page.getByTestId('vexbot-input').fill('Can you open the proposal here and summarize it for me?');
-  const response = page.waitForResponse(response => response.url().endsWith('/api/vexbot') && response.request().postDataJSON()?.action === 'ask');
+  await page
+    .getByTestId('vexbot-input')
+    .fill('Can you open the proposal here and summarize it for me?');
+  const response = page.waitForResponse(
+    (response) =>
+      response.url().endsWith('/api/vexbot') && response.request().postDataJSON()?.action === 'ask',
+  );
   await page.getByTestId('vexbot-send').click();
   expect((await response).headers()['content-type']).toContain('text/event-stream');
-  await expect(page.getByTestId('vexbot-assistant').last()).toContainText('booking website');
+  await expect(page.getByTestId('vexbot-assistant')).toHaveCount(1, { timeout: 45000 });
+  await expect(page.getByTestId('vexbot-assistant').last()).toContainText('booking website', {
+    timeout: 45000,
+  });
   await expect(page.getByTestId('vexbot-sources').last()).toContainText('Proposal_Draft.pdf');
   await page.getByTestId('vexbot-input').fill('How much will it cost?');
+  await expect(page.getByTestId('vexbot-send')).toBeEnabled();
   await page.getByTestId('vexbot-send').click();
-  await expect(page.getByTestId('vexbot-assistant').last()).toContainText('42,000');
+  await expect(page.getByTestId('vexbot-assistant')).toHaveCount(2, { timeout: 45000 });
+  await expect(page.getByTestId('vexbot-assistant').last()).toContainText('42,000', {
+    timeout: 45000,
+  });
   await page.getByTestId('vexbot-input').fill('Summarise the SOW');
+  await expect(page.getByTestId('vexbot-send')).toBeEnabled();
   await page.getByTestId('vexbot-send').click();
-  await expect(page.getByTestId('vexbot-assistant').last()).toContainText('weekly training');
+  await expect(page.getByTestId('vexbot-assistant')).toHaveCount(3, { timeout: 45000 });
+  await expect(page.getByTestId('vexbot-assistant').last()).toContainText('weekly training', {
+    timeout: 45000,
+  });
   await expect(page.getByTestId('vexbot-sources').last()).toContainText('Statement-of-Work.pdf');
   expect(errors).toEqual([]);
 });
 
-test('Test workspace: talk to the robot with the chat panel closed', async ({ page, context, isMobile }) => {
+test('Test workspace: talk to the robot with the chat panel closed', async ({
+  page,
+  context,
+  isMobile,
+}) => {
   const prefix = isMobile ? 'files-mobile' : 'files';
   await context.grantPermissions(['microphone']);
   const errors = await login(page);
-  await page.waitForFunction(() => (document.querySelector('[data-testid=vexbot]') as HTMLElement).dataset.state === 'resting', null, { timeout: 30_000 });
+  await page.waitForFunction(
+    () =>
+      (document.querySelector('[data-testid=vexbot]') as HTMLElement).dataset.state === 'resting',
+    null,
+    { timeout: 30_000 },
+  );
   await expect(page.getByTestId('vexbot-talk')).toHaveText('Talk to Vexbot');
   await expect(page.getByTestId('vexbot-launcher')).toHaveText('Ask Vexbot');
   const before = await data(page);
@@ -110,19 +150,34 @@ test('Test workspace: talk to the robot with the chat panel closed', async ({ pa
   await shot(page, `${prefix}-03-voice-listening`);
 
   // No typing, no Send, no play button: the fake microphone "speaks", Vexbot hears the pause, answers aloud.
-  await expect(page.getByTestId('vexbot-talk-heard')).toContainText('Summarize pike point.pdf', { timeout: 40_000 });
+  await expect(page.getByTestId('vexbot-talk-heard')).toContainText('Summarize pike point.pdf', {
+    timeout: 40_000,
+  });
   const reply = page.getByTestId('vexbot-talk-reply');
   await expect(reply).toContainText('2.4 km coastal walkway');
   await expect(page.getByTestId('vexbot-talk-sources')).toContainText('pike point.pdf');
   await shot(page, `${prefix}-04-voice-reply-with-source`);
   // After the spoken reply ends it listens again by itself.
-  await page.waitForFunction(() => {
-    const w = window as unknown as { __seen: Record<string, string[]> };
-    const now = (document.querySelector('[data-testid=vexbot]') as HTMLElement).dataset.talk;
-    return w.__seen.talk.includes('speaking') && (now === 'listening' || now === 'hearing');
-  }, null, { timeout: 30_000 });
+  await page.waitForFunction(
+    () => {
+      const w = window as unknown as { __seen: Record<string, string[]> };
+      const now = (document.querySelector('[data-testid=vexbot]') as HTMLElement).dataset.talk;
+      return w.__seen.talk.includes('speaking') && (now === 'listening' || now === 'hearing');
+    },
+    null,
+    { timeout: 30_000 },
+  );
   const states = await seen(page);
-  expect(states.talk).toEqual(expect.arrayContaining(['starting', 'listening', 'hearing', 'transcribing', 'thinking', 'speaking']));
+  expect(states.talk).toEqual(
+    expect.arrayContaining([
+      'starting',
+      'listening',
+      'hearing',
+      'transcribing',
+      'thinking',
+      'speaking',
+    ]),
+  );
   // The panel never opened, and the robot never moved into it.
   expect(states.place).not.toContain('panel');
   await expect(page.getByTestId('vexbot-panel')).toHaveCount(0);

@@ -5,7 +5,7 @@ export const CLIENT = '22222222-2222-4222-8222-222222222222';
 export const THREAD = '33333333-3333-4333-8333-333333333333';
 
 // UI contract tests use isolated network fixtures; PostgreSQL policies are tested separately.
-export async function fixture(page: Page, role: 'admin' | 'client' = 'admin') {
+export async function fixture(page: Page, role: 'admin' | 'client' = 'admin', insights?: (input: Record<string, unknown>) => unknown) {
   const userId = role === 'admin' ? ADMIN : CLIENT;
   const profiles = [
     { id: ADMIN, display_name: 'Allan', role: 'admin', active: true },
@@ -123,6 +123,7 @@ export async function fixture(page: Page, role: 'admin' | 'client' = 'admin') {
   await page.route('**/api/clients', (route) =>
     route.fulfill({ status: 201, json: { id: CLIENT } }),
   );
+  await page.route('**/api/insights', route => route.fulfill({json: insights?.(route.request().postDataJSON()) || { counts:{unread:0,messages:0,summaries:0,follow_up:0},events:[],notifications:[],timezone:'Pacific/Auckland',conversations:[],rules:[] }}));
   await page.route('**/api/notifications', (route) =>
     route.fulfill({ status: 503, json: { error: 'Email not configured' } }),
   );

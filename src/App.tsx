@@ -20,7 +20,8 @@ import {
   Menu,
   X,
   Trash2,
-  Folder, Video,
+  Folder,
+  Video,
 } from 'lucide-react';
 import { hasSupabaseConfig, supabase } from './lib/supabase';
 import { accessMap, db, loadPortal, unread, unwrap } from './services/portal';
@@ -32,10 +33,22 @@ import { ClientDialog } from './components/ClientDialog';
 import { DeleteClientsDialog } from './components/DeleteClientsDialog';
 import { Workspace } from './components/Workspace';
 import { Chat } from './components/Chat';
+import { AdminActivityOverview, NotificationBell } from './components/AdminNotifications';
+import { useAdminInsights } from './services/use-admin-insights';
+import { ClientActivity, ClientConversations } from './components/ClientInsights';
+import {
+  clearActivityQueue,
+  insightHash,
+  recordLogout,
+  trackActivity,
+  type InsightTarget,
+} from './services/activity';
+import './components/insights.css';
 import './App.css';
 
 type Page = 'Dashboard' | 'Clients' | 'Messages' | 'Vexbot';
-export type WorkspaceSection = 'Overview' | 'Documents' | 'Videos' | 'Workspace' | 'Project Updates' | 'Team & Contacts';
+export type WorkspaceSection =
+  'Overview' | 'Documents' | 'Videos' | 'Workspace' | 'Project Updates' | 'Team & Contacts';
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -43,7 +56,9 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [page, setPage] = useState<Page>('Dashboard');
-  const [section, setSection] = useState<WorkspaceSection>(() => window.location.hash.startsWith('#video=') ? 'Videos' : 'Workspace');
+  const [section, setSection] = useState<WorkspaceSection>(() =>
+    window.location.hash.startsWith('#video=') ? 'Videos' : 'Workspace',
+  );
   const [presentationTitle, setPresentationTitle] = useState('');
   const [workspace, setWorkspace] = useState<string | null>(null);
   const [dialog, setDialog] = useState<string | null>(null);
@@ -53,6 +68,54 @@ export default function App() {
   const [clientNotice, setClientNotice] = useState('');
   const [retry, setRetry] = useState(0);
   const [collapsed, setCollapsed] = useState(false);
+  const [clientTab, setClientTab] = useState<InsightTarget['tab']>('workspace');
+  const [insightTarget, setInsightTarget] = useState<InsightTarget | null>(null);
+  const adminInsights = useAdminInsights(profile?.role === 'admin', profile?.id);
+  const adminTimezone = adminInsights.overview?.timezone || 'Pacific/Auckland';
+  useEffect(() => {
+    if (profile?.role !== 'admin') return;
+    const openLink = () => {
+      const params = new URLSearchParams(window.location.hash.slice(1));
+      const client = params.get('client');
+      if (!client || !data.clients.some((c) => c.id === client)) return;
+      const raw = params.get('tab');
+      const tab: InsightTarget['tab'] =
+        raw === 'conversations' || raw === 'messages' || raw === 'activity' ? raw : 'workspace';
+      setWorkspace(client);
+      setPage('Dashboard');
+      setClientTab(tab);
+      setInsightTarget({
+        workspace: client,
+        tab,
+        conversation: params.get('conversation') || undefined,
+        thread: params.get('thread') || undefined,
+        message: params.get('message') || undefined,
+        activity: params.get('activity') || undefined,
+      });
+    };
+    openLink();
+    window.addEventListener('hashchange', openLink);
+    return () => window.removeEventListener('hashchange', openLink);
+  }, [profile?.role, data.clients]);
+  useEffect(() => {
+    if (profile?.role !== 'client' || !workspace) return;
+    trackActivity({ event: 'workspace_opened', workspace_id: workspace }, `workspace:${workspace}`);
+  }, [profile?.role, workspace]);
+  useEffect(() => {
+    if (profile?.role !== 'client' || !workspace || !session) return;
+    try {
+      const claims = JSON.parse(
+        atob(session.access_token.split('.')[1].replaceAll('-', '+').replaceAll('_', '/')),
+      );
+      const key = `vexora-login:${profile.id}:${claims.session_id || session.user.id}`;
+      if (!sessionStorage.getItem(key)) {
+        trackActivity({ event: 'login', workspace_id: workspace });
+        sessionStorage.setItem(key, '1');
+      }
+    } catch {
+      /* Session privacy settings do not affect portal access. */
+    }
+  }, [profile?.id, profile?.role, workspace, session]);
   const mobileMenu = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     if (!supabase) {
@@ -72,6 +135,7 @@ export default function App() {
     const { data: listener } = supabase.auth.onAuthStateChange((_event, next) => {
       setSession(next);
       if (!next) {
+        clearActivityQueue();
         setProfile(null);
         setData(emptyData);
         setWorkspace(null);
@@ -95,7 +159,7 @@ export default function App() {
   useEffect(() => {
     const openSharedVideo = () => {
       const id = new URLSearchParams(window.location.hash.slice(1)).get('video');
-      const file = data.files.find(file => file.id === id && file.mime_type.startsWith('video/'));
+      const file = data.files.find((file) => file.id === id && file.mime_type.startsWith('video/'));
       if (!file) return;
       setWorkspace(file.workspace_id);
       setSection('Videos');
@@ -134,10 +198,13 @@ export default function App() {
         setData(next);
         // Clients open their own workspace, or the first one they are a member of.
         setWorkspace(
-          next.files.find(file => file.id === new URLSearchParams(window.location.hash.slice(1)).get('video'))?.workspace_id ?? (ownProfile.role === 'client'
-            ? ((next.clients.find((row) => row.id === ownProfile.id) ?? next.clients[0])?.id ??
+          next.files.find(
+            (file) => file.id === new URLSearchParams(window.location.hash.slice(1)).get('video'),
+          )?.workspace_id ??
+            (ownProfile.role === 'client'
+              ? ((next.clients.find((row) => row.id === ownProfile.id) ?? next.clients[0])?.id ??
                 null)
-            : null),
+              : null),
         );
       }
     })()
@@ -183,6 +250,7 @@ export default function App() {
     };
   }, [profile]);
   async function signOut() {
+    if (profile?.role === 'client' && workspace) await recordLogout(workspace);
     const result = await db().auth.signOut({ scope: 'local' });
     if (result.error) {
       setError(result.error.message);
@@ -241,6 +309,9 @@ export default function App() {
     );
   }
   function navigate(next: Page) {
+    window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    setClientTab('workspace');
+    setInsightTarget(null);
     setPresentationTitle('');
     if (next === 'Dashboard') setSection('Workspace');
     mobileMenu.current?.close();
@@ -251,6 +322,9 @@ export default function App() {
     setClientNotice('');
   }
   function navigateWorkspace(next: WorkspaceSection) {
+    window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    setClientTab('workspace');
+    setInsightTarget(null);
     setPresentationTitle('');
     mobileMenu.current?.close();
     setSection(next);
@@ -265,17 +339,28 @@ export default function App() {
     { label: 'Videos' as const, icon: Video },
     { label: 'VexBot' as const, icon: Bot },
   ];
-  function navigationActive(label: typeof portalNavigation[number]['label']) {
-    if (label === 'Documents' || label === 'Videos') return page === 'Dashboard' && !!client && section === label;
+  function navigationActive(label: (typeof portalNavigation)[number]['label']) {
+    if (label === 'Documents' || label === 'Videos')
+      return page === 'Dashboard' && !!client && section === label;
     if (label === 'VexBot') return page === 'Vexbot';
-    return page === label && (label !== 'Dashboard' || !client || !['Documents', 'Videos'].includes(section));
+    return (
+      page === label &&
+      (label !== 'Dashboard' || !client || !['Documents', 'Videos'].includes(section))
+    );
   }
-  function portalNavigate(label: typeof portalNavigation[number]['label']) {
+  function portalNavigate(label: (typeof portalNavigation)[number]['label']) {
     if (label === 'VexBot' && !admin) {
-      window.dispatchEvent(new CustomEvent(ASK_EVENT, { detail: { workspace: workspace ?? ownWorkspaces[0]?.id ?? null, question: '' } }));
+      window.dispatchEvent(
+        new CustomEvent(ASK_EVENT, {
+          detail: { workspace: workspace ?? ownWorkspaces[0]?.id ?? null, question: '' },
+        }),
+      );
       mobileMenu.current?.close();
     } else if (label === 'Documents' || label === 'Videos') navigateWorkspace(label);
-    else { setSection('Workspace'); navigate(label === 'VexBot' ? 'Vexbot' : label); }
+    else {
+      setSection('Workspace');
+      navigate(label === 'VexBot' ? 'Vexbot' : label);
+    }
   }
   return (
     <div className={`app-layout ${collapsed ? 'is-collapsed' : ''}`}>
@@ -298,11 +383,22 @@ export default function App() {
           <nav aria-label="Main navigation">
             {portalNavigation.map(({ label, icon: Icon }) => {
               const active = navigationActive(label);
-              return <button key={label} className={`nav-item ${active ? 'active' : ''}`} aria-label={label}
-                aria-current={active ? 'page' : undefined} title={label} onClick={() => portalNavigate(label)}>
-                <Icon size={27} /><span className="nav-copy">{label}</span>
-                {label === 'Messages' && totalUnread > 0 && <span className="nav-count">{totalUnread}</span>}
-              </button>;
+              return (
+                <button
+                  key={label}
+                  className={`nav-item ${active ? 'active' : ''}`}
+                  aria-label={label}
+                  aria-current={active ? 'page' : undefined}
+                  title={label}
+                  onClick={() => portalNavigate(label)}
+                >
+                  <Icon size={27} />
+                  <span className="nav-copy">{label}</span>
+                  {label === 'Messages' && totalUnread > 0 && (
+                    <span className="nav-count">{totalUnread}</span>
+                  )}
+                </button>
+              );
             })}
           </nav>
         </LayoutGroup>
@@ -348,11 +444,35 @@ export default function App() {
             >
               <Menu size={19} />
             </button>
-            <button className="text-button breadcrumb-prefix" onClick={() => navigate('Dashboard')}>Home</button> <ChevronRight size={16} />{' '}
-            {client && page !== 'Messages' && <><span>{section}</span><ChevronRight size={16} /></>}
-            <strong>{client && section === 'Videos' && presentationTitle ? presentationTitle : client?.company || (page === 'Dashboard' ? 'Dashboard' : page)}</strong>
+            <button className="text-button breadcrumb-prefix" onClick={() => navigate('Dashboard')}>
+              Home
+            </button>{' '}
+            <ChevronRight size={16} />{' '}
+            {client && page !== 'Messages' && (
+              <>
+                <span>{section}</span>
+                <ChevronRight size={16} />
+              </>
+            )}
+            <strong>
+              {client && section === 'Videos' && presentationTitle
+                ? presentationTitle
+                : client?.company || (page === 'Dashboard' ? 'Dashboard' : page)}
+            </strong>
           </span>
           <span className="topbar-right">
+            {admin && (
+              <NotificationBell
+                clients={data.clients}
+                timezone={adminTimezone}
+                unread={adminInsights.overview?.counts.unread || 0}
+                onChange={adminInsights.refresh}
+                onNavigate={(target) => {
+                  window.location.hash = insightHash(target);
+                  void refresh();
+                }}
+              />
+            )}
             {ownWorkspaces.length > 1 && (
               <select
                 aria-label="Switch workspace"
@@ -368,7 +488,16 @@ export default function App() {
                 ))}
               </select>
             )}
-            <span className="header-profile"><span className="avatar">{profile.display_name.split(' ').map(name => name[0]).slice(0, 2).join('')}</span><strong>{profile.display_name}</strong></span>
+            <span className="header-profile">
+              <span className="avatar">
+                {profile.display_name
+                  .split(' ')
+                  .map((name) => name[0])
+                  .slice(0, 2)
+                  .join('')}
+              </span>
+              <strong>{profile.display_name}</strong>
+            </span>
             <button
               aria-label="Refresh portal"
               className="icon-button"
@@ -395,19 +524,103 @@ export default function App() {
             {admin && page === 'Vexbot' ? (
               <VexbotAdmin clients={data.clients} profiles={data.profiles} />
             ) : client && page !== 'Messages' ? (
-              <Workspace
-                key={client.id}
-                client={client}
-                profile={profile}
-                data={data}
-                readOnly={readOnly}
-                refresh={refresh}
-                section={section}
-                onPresentationTitle={setPresentationTitle}
-                onManage={() => setDialog(client.id)}
-                onMessages={() => setPage('Messages')}
-                onBack={admin ? () => setWorkspace(null) : undefined}
-              />
+              <>
+                {admin && (
+                  <nav className="client-profile-tabs" aria-label="Client administration profile">
+                    {(['workspace', 'activity', 'conversations', 'messages'] as const).map(
+                      (tab) => (
+                        <button
+                          key={tab}
+                          className="secondary"
+                          aria-current={clientTab === tab ? 'page' : undefined}
+                          onClick={() => {
+                            setClientTab(tab);
+                            setInsightTarget(null);
+                            window.location.hash = insightHash({ workspace: client.id, tab });
+                          }}
+                        >
+                          {tab === 'conversations'
+                            ? 'VexBot Conversations'
+                            : tab[0].toUpperCase() + tab.slice(1)}
+                        </button>
+                      ),
+                    )}
+                  </nav>
+                )}
+                {admin && clientTab === 'activity' ? (
+                  <ClientActivity
+                    key={client.id}
+                    workspace={client.id}
+                    timezone={adminTimezone}
+                    highlight={insightTarget?.activity}
+                  />
+                ) : admin && clientTab === 'conversations' ? (
+                  <ClientConversations
+                    key={client.id}
+                    workspace={client.id}
+                    timezone={adminTimezone}
+                    selected={insightTarget?.conversation}
+                    onSelect={(id) => {
+                      window.location.hash = insightHash({
+                        workspace: client.id,
+                        tab: 'conversations',
+                        conversation: id,
+                      });
+                    }}
+                  />
+                ) : admin && clientTab === 'messages' ? (
+                  <Chat
+                    key={client.id}
+                    profile={profile}
+                    data={data}
+                    refresh={refresh}
+                    workspaceId={client.id}
+                    initialThread={insightTarget?.thread}
+                    initialMessage={insightTarget?.message}
+                    onThreadSelect={(thread) => {
+                      window.location.hash = insightHash({
+                        workspace: client.id,
+                        tab: 'messages',
+                        thread,
+                      });
+                    }}
+                  />
+                ) : (
+                  <Workspace
+                    key={client.id}
+                    client={client}
+                    profile={profile}
+                    data={data}
+                    readOnly={readOnly}
+                    refresh={refresh}
+                    section={section}
+                    onPresentationTitle={setPresentationTitle}
+                    onManage={() => setDialog(client.id)}
+                    onMessages={() => setPage('Messages')}
+                    onBack={
+                      admin
+                        ? () => {
+                            window.history.replaceState(
+                              null,
+                              '',
+                              window.location.pathname + window.location.search,
+                            );
+                            setWorkspace(null);
+                            setInsightTarget(null);
+                            setClientTab('workspace');
+                          }
+                        : undefined
+                    }
+                  />
+                )}
+                {!admin && (
+                  <p className="activity-privacy">
+                    Relevant portal activity and VexBot text conversations and available voice
+                    transcripts are recorded and available to authorised Vexora administrators for
+                    client support and follow-up. The portal does not store raw microphone audio.
+                  </p>
+                )}
+              </>
             ) : page === 'Messages' ? (
               <>
                 <div className="page-heading">
@@ -516,6 +729,19 @@ export default function App() {
                       </section>
                     </VexoraReveal>
                   </>
+                )}
+                {admin && page === 'Dashboard' && (
+                  <AdminActivityOverview
+                    overview={adminInsights.overview}
+                    error={adminInsights.error}
+                    onRefresh={adminInsights.refresh}
+                    clients={data.clients}
+                    timezone={adminTimezone}
+                    onNavigate={(target) => {
+                      window.location.hash = insightHash(target);
+                      void refresh();
+                    }}
+                  />
                 )}
                 <div className={page === 'Dashboard' ? 'dashboard-panels' : ''}>
                   <section className="panel">
@@ -629,6 +855,13 @@ export default function App() {
                               className="client-row"
                               key={row.id}
                               onClick={() => {
+                                window.history.replaceState(
+                                  null,
+                                  '',
+                                  window.location.pathname + window.location.search,
+                                );
+                                setClientTab('workspace');
+                                setInsightTarget(null);
                                 setWorkspace(row.id);
                                 setPage('Clients');
                               }}
@@ -744,9 +977,17 @@ export default function App() {
         </div>
         <nav aria-label="Mobile navigation">
           {portalNavigation.map(({ label, icon: Icon }) => (
-            <button key={label} className="secondary" aria-current={navigationActive(label) ? 'page' : undefined}
-              onClick={() => portalNavigate(label)}><Icon size={20} />{label}
-              {label === 'Messages' && totalUnread > 0 && <span className="nav-count">{totalUnread}</span>}
+            <button
+              key={label}
+              className="secondary"
+              aria-current={navigationActive(label) ? 'page' : undefined}
+              onClick={() => portalNavigate(label)}
+            >
+              <Icon size={20} />
+              {label}
+              {label === 'Messages' && totalUnread > 0 && (
+                <span className="nav-count">{totalUnread}</span>
+              )}
             </button>
           ))}
         </nav>

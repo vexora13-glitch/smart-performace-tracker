@@ -2,6 +2,9 @@ import './require-portal-checkout.mjs';
 import { createServer, loadEnv } from 'vite';
 import clients from '../api/clients.mjs';
 import notifications from '../api/notifications.mjs';
+import insights from '../api/insights.mjs';
+import { processSummaries } from '../server/insights.mjs';
+import { database } from '../server/runtime.mjs';
 import vexbot from '../api/vexbot.mjs';
 import vexbotVoice from '../api/vexbot-voice.mjs';
 import gmail from '../api/gmail/[action].mjs';
@@ -12,7 +15,9 @@ const BODY_LIMITS = { '/api/vexbot': 1_600_000, '/api/vexbot-voice': 70_000 };
 // Keep server-only variables in the Node process. Vite exposes only VITE_* variables.
 // `npm run dev` uses .env.local (hosted Portal). `npm run dev:localtest` uses .env.localtest.local (local
 // Supabase on 127.0.0.1:56421) on port 5186 and refuses any non-loopback database.
-const mode = process.argv.includes('--localtest') ? 'localtest' : process.env.PORTAL_DEV_MODE || 'development';
+const mode = process.argv.includes('--localtest')
+  ? 'localtest'
+  : process.env.PORTAL_DEV_MODE || 'development';
 process.env.PORTAL_DEV_MODE = mode;
 Object.assign(process.env, loadEnv(mode, process.cwd(), ''));
 if (mode === 'localtest') {
@@ -36,13 +41,17 @@ const server = await createServer({
           const handler =
             pathname === '/api/clients'
               ? clients
-              : pathname === '/api/notifications'
-                ? notifications
-                : pathname === '/api/vexbot-voice' ? vexbotVoice : pathname === '/api/vexbot'
-                  ? vexbot
-                  : gmailAction
-                    ? gmail
-                    : null;
+              : pathname === '/api/insights'
+                ? insights
+                : pathname === '/api/notifications'
+                  ? notifications
+                  : pathname === '/api/vexbot-voice'
+                    ? vexbotVoice
+                    : pathname === '/api/vexbot'
+                      ? vexbot
+                      : gmailAction
+                        ? gmail
+                        : null;
           if (!handler) return next();
           res.status = (code) => {
             res.statusCode = code;
@@ -54,9 +63,10 @@ const server = await createServer({
             return res;
           };
           try {
-            const limit = pathname === '/api/clients' && req.method === 'DELETE'
-              ? 65_536
-              : (BODY_LIMITS[pathname] ?? 16_384);
+            const limit =
+              pathname === '/api/clients' && req.method === 'DELETE'
+                ? 65_536
+                : (BODY_LIMITS[pathname] ?? 16_384);
             let body = '';
             for await (const chunk of req) {
               body += chunk;
@@ -82,3 +92,21 @@ const server = await createServer({
 });
 await server.listen();
 server.printUrls();
+// Hosted deployments use the authenticated cron route. The isolated local test server has its own
+// background sweep so completed conversations can be reviewed without manually invoking a worker.
+if (mode === 'localtest') {
+  let processing = false;
+  const summaryTimer = setInterval(async () => {
+    if (processing) return;
+    processing = true;
+    try {
+      await processSummaries(database());
+    } catch {
+      /* Durable jobs remain pending for the next sweep. */
+    } finally {
+      processing = false;
+    }
+  }, 30000);
+  summaryTimer.unref();
+  server.httpServer?.once('close', () => clearInterval(summaryTimer));
+}

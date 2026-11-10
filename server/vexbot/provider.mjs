@@ -3,6 +3,7 @@
 // exists so the whole flow can be built and tested locally without a key.
 import { ANSWER_SCHEMA, systemPrompt, userPrompt } from './prompt.mjs';
 import { events, partialAnswer } from '../../src/vexbot/stream.mjs';
+import { SUMMARY_INSTRUCTIONS, SUMMARY_SCHEMA } from '../insights.mjs';
 
 const OPENAI = 'https://api.openai.com/v1';
 
@@ -22,6 +23,18 @@ function openaiProvider(env) {
   return {
     name: 'openai',
     voice: Boolean(env.VEXBOT_TRANSCRIBE_MODEL && env.VEXBOT_TTS_MODEL),
+    async summarise({ messages, partial }) {
+      const response = await openai(env, '/chat/completions', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: env.VEXBOT_SUMMARY_MODEL || model, store: false,
+          messages: [{ role: 'system', content: SUMMARY_INSTRUCTIONS }, { role: 'user', content: JSON.stringify({ partial_transcript: partial, messages }) }],
+          response_format: { type: 'json_schema', json_schema: { name: 'vexbot_session_summary', strict: true, schema: SUMMARY_SCHEMA } },
+        }),
+      });
+      const data = await response.json();
+      if (data.choices?.[0]?.finish_reason !== 'stop') throw new Error('Incomplete summary');
+      return JSON.parse(data.choices[0].message.content);
+    },
     async answer({ settings, question, sources, history, onDelta, signal }) {
       const response = await openai(env, '/chat/completions', {
         method: 'POST',
@@ -90,6 +103,14 @@ function mockProvider(env) {
   return {
     name: 'mock',
     voice: true,
+    async summarise({ messages }) {
+      const point = m => ({ text: m.content.slice(0, 1000), evidence: [{ message_id: m.id, quote: m.content.slice(0, 200) }] });
+      return { overview: `[Local test summary] ${messages.filter(m => m.role === 'user').map(m => m.content).join(' ').slice(0, 500) || 'No client transcript captured.'}`,
+        key_questions: messages.filter(m => m.role === 'user').slice(0, 20).map(point),
+        information_provided: messages.filter(m => m.role === 'assistant').slice(0, 20).map(point),
+        client_requests: [], outstanding_questions: [], follow_up_required: [], referenced_documents: [],
+      };
+    },
     // Extractive: quotes the best-ranked passage. Never invents content and declines with no sources.
     async answer({ question, sources }) {
       // A file the client asked about: summarise by quoting its opening, or the sentence that matches.

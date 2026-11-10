@@ -1,0 +1,329 @@
+.insights-panel,
+.admin-activity-overview {
+  padding: 24px;
+  margin-bottom: 24px;
+  min-width: 0;
+}
+.insight-filters {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  align-items: end;
+  margin: 20px 0;
+}
+.insight-filters label {
+  flex: 1;
+  min-width: 140px;
+}
+.insight-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.insight-check input {
+  width: auto;
+}
+.insight-list,
+.activity-timeline {
+  list-style: none;
+  padding: 0;
+  margin: 16px 0;
+}
+.activity-timeline li {
+  border-left: 2px solid var(--vx-border);
+  padding: 0 0 24px 20px;
+  margin-left: 6px;
+  overflow-wrap: anywhere;
+}
+.activity-timeline time,
+.insight-record small,
+.transcript-message small {
+  display: block;
+  color: var(--vx-muted);
+  font-size: 12px;
+  margin: 6px 0;
+}
+.activity-timeline details {
+  font-size: 12px;
+  margin-top: 8px;
+}
+.insight-record {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: inherit;
+  border: 0;
+  border-radius: 10px;
+  padding: 16px;
+  align-items: start;
+  white-space: normal;
+}
+.insight-record:hover,
+.insight-mini:hover {
+  background: var(--vx-elevated);
+}
+.insight-record p {
+  font-weight: 400;
+  line-height: 1.6;
+  margin: 8px 0 0;
+}
+.insight-list > li {
+  border-bottom: 1px solid var(--vx-border);
+}
+.insight-record > span:first-child {
+  min-width: 0;
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.insight-record strong {
+  display: block;
+}
+.is-unread {
+  background: var(--vx-surface);
+}
+.unread-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--vx-accent);
+  margin-right: 7px;
+}
+.notification-bell {
+  position: relative;
+}
+.notification-badge {
+  position: absolute;
+  top: -6px;
+  right: -7px;
+  background: var(--vx-accent);
+  color: #fff;
+  border: 2px solid var(--vx-bg-2);
+  border-radius: 20px;
+  min-width: 20px;
+  padding: 1px 4px;
+  font-size: 11px;
+}
+.notification-dialog {
+  width: min(680px, 94vw);
+  max-height: 85dvh;
+  overflow: auto;
+}
+.notification-read {
+  margin: 0 16px 12px;
+  font-size: 12px;
+}
+.insight-pagination {
+  justify-content: flex-end;
+  align-items: center;
+  margin-top: 20px;
+}
+.insight-pagination span {
+  font-size: 12px;
+}
+.insight-counts {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin: 20px 0;
+}
+.insight-counts > span {
+  border: 1px solid var(--vx-border);
+  border-radius: 12px;
+  padding: 16px;
+  font-size: 12px;
+}
+.insight-counts strong {
+  display: block;
+  font-size: 24px;
+  margin-bottom: 5px;
+}
+.insight-overview-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+.insight-overview-columns h3 {
+  font-size: 14px;
+}
+.insight-mini {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: inherit;
+  border: 0;
+  border-bottom: 1px solid var(--vx-border);
+  border-radius: 0;
+  padding: 12px 0;
+  white-space: normal;
+}
+.insight-mini strong,
+.insight-mini span,
+.insight-mini small {
+  display: block;
+}
+.insight-mini strong {
+  font-size: 13px;
+}
+.insight-mini span {
+  font-size: 12px;
+  font-weight: 400;
+  margin: 5px 0;
+}
+.insight-mini small {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--vx-muted);
+}
+.insight-settings {
+  border-top: 1px solid var(--vx-border);
+  margin-top: 16px;
+  padding-top: 20px;
+}
+.insight-settings .insight-check {
+  margin: 12px 0;
+}
+.client-profile-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 24px;
+}
+.client-profile-tabs button[aria-current='page'] {
+  background: var(--vx-accent);
+  color: white;
+}
+.conversation-summary {
+  background: var(--vx-surface);
+  border: 1px solid var(--vx-border);
+  border-radius: 14px;
+  padding: 24px;
+  margin: 24px 0;
+}
+.conversation-summary p,
+.conversation-summary li {
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.conversation-summary section {
+  margin-top: 22px;
+}
+.conversation-summary h4 {
+  margin-bottom: 6px;
+}
+.conversation-summary details {
+  font-size: 12px;
+}
+.conversation-summary blockquote {
+  margin: 8px 0;
+  padding-left: 12px;
+  border-left: 2px solid var(--vx-border-strong);
+}
+.transcript-panel > summary {
+  font-weight: 600;
+  cursor: pointer;
+  margin-bottom: 16px;
+}
+.transcript-message {
+  border: 1px solid var(--vx-border);
+  border-radius: 12px;
+  margin: 12px 0;
+  padding: 18px;
+  scroll-margin-top: 90px;
+}
+.transcript-message.user {
+  background: var(--vx-surface);
+}
+.transcript-message p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.8;
+}
+.insight-highlight,
+.transcript-message:target {
+  outline: 2px solid var(--vx-accent);
+  outline-offset: 3px;
+}
+.activity-privacy {
+  font-size: 12px;
+  color: var(--vx-muted);
+  line-height: 1.6;
+  padding: 16px 0;
+}
+.admin-activity-overview {
+  margin-top: 24px;
+}
+@media (max-width: 650px) {
+  .insights-panel,
+  .admin-activity-overview {
+    padding: 16px;
+  }
+  .insight-overview-columns {
+    grid-template-columns: 1fr;
+  }
+  .insight-counts {
+    gap: 8px;
+  }
+  .insight-counts > span {
+    padding: 10px;
+    font-size: 11px;
+  }
+  .insight-record {
+    padding: 12px;
+    flex-direction: column;
+  }
+  .conversation-summary {
+    padding: 16px;
+  }
+  .client-profile-tabs button {
+    font-size: 12px;
+    padding: 9px;
+  }
+}
+
+.document-preview-dialog {
+  width: min(1000px, 94vw);
+  max-height: 90dvh;
+  overflow: auto;
+}
+.document-preview canvas,
+.document-preview img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 16px auto;
+}
+.document-preview pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.document-preview .button-row {
+  align-items: center;
+  justify-content: center;
+}
+
+.insight-counts > button {
+  display: block;
+  text-align: left;
+  background: var(--vx-bg-2);
+  color: var(--vx-text);
+  border: 1px solid var(--vx-border);
+  border-radius: 12px;
+  padding: 16px;
+  font-size: 12px;
+  white-space: normal;
+}
+.insight-counts > button:hover {
+  background: var(--vx-elevated);
+}
+.insight-attention {
+  margin: 20px 0;
+  padding: 16px;
+  border: 1px solid var(--vx-border);
+  border-radius: 12px;
+}

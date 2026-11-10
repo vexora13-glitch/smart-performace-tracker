@@ -12,6 +12,9 @@ export function Chat({
   refresh,
   workspaceId,
   readOnly = false,
+  initialThread,
+  initialMessage,
+  onThreadSelect,
 }: {
   profile: Profile;
   data: PortalData;
@@ -19,6 +22,9 @@ export function Chat({
   workspaceId?: string;
   /** Read-only workspace members can read conversations but not start or reply to them. */
   readOnly?: boolean;
+  initialThread?: string;
+  initialMessage?: string;
+  onThreadSelect?: (thread: string) => void;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [archived, setArchived] = useState(false);
@@ -30,6 +36,7 @@ export function Chat({
   const log = useRef<HTMLDivElement>(null);
   const followBottom = useRef(true);
   const previousThread = useRef<string | null>(null);
+  const openedDeepLink = useRef('');
   const [newMessages, setNewMessages] = useState(false);
   const reduced = useReducedMotion();
   const conversation = data.conversations.find((row) => row.id === selected);
@@ -62,6 +69,29 @@ export function Chat({
     setComposing(false);
     setDraft('');
   }, [workspaceId]);
+  useEffect(() => {
+    if (!initialThread) return;
+    const key = `${workspaceId}:${initialThread}`;
+    if (openedDeepLink.current === key) return;
+    const thread = data.conversations.find(
+      (c) => c.id === initialThread && (!workspaceId || c.workspace_id === workspaceId),
+    );
+    if (thread) {
+      openedDeepLink.current = key;
+      setSelected(thread.id);
+      setArchived(!!thread.archived_at);
+      setComposing(false);
+    }
+  }, [initialThread, workspaceId, data.conversations]);
+  useEffect(() => {
+    if (!initialMessage || !selected) return;
+    const frame = requestAnimationFrame(() =>
+      document
+        .getElementById(`portal-message-${initialMessage}`)
+        ?.scrollIntoView({ block: 'center' }),
+    );
+    return () => cancelAnimationFrame(frame);
+  }, [initialMessage, selected, messages.length]);
   useEffect(() => {
     if (!selected || document.visibilityState !== 'visible') return;
     let active = true;
@@ -107,6 +137,7 @@ export function Chat({
         }),
       ) as { conversation_id: string; message_id: string }[];
       setSelected(result[0].conversation_id);
+      onThreadSelect?.(result[0].conversation_id);
       setComposing(false);
       setArchived(false);
       setDraft('');
@@ -257,6 +288,7 @@ export function Chat({
               className={`thread-row ${row.id === selected ? 'selected' : ''}`}
               onClick={() => {
                 setSelected(row.id);
+                onThreadSelect?.(row.id);
                 setComposing(false);
                 setDraft('');
                 setNotice('');
@@ -362,6 +394,7 @@ export function Chat({
                       <m.article
                         className={`message ${own ? 'own' : ''}`}
                         key={row.id}
+                        id={`portal-message-${row.id}`}
                         initial={reduced ? false : { opacity: 0, y: 6 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ duration: reduced ? 0 : motionTokens.micro }}

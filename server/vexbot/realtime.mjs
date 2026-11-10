@@ -140,6 +140,7 @@ export function supervise({ callId, session, context, emit, terminate = hangUp, 
     try { await terminate(callId); terminated = true; } catch (error) { console.error(`[vexbot] Realtime hangup could not be confirmed (${error?.status ?? error?.name ?? 'unknown'})`); }
     socket?.close();
     await saving;
+    try { await context.complete?.(reason); } catch { /* Inactivity sweep retries completion from saved turns. */ }
     resolveDone({ reason, input, output, responses, terminated });
     return done;
   };
