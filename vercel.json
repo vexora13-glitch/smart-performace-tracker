@@ -2,7 +2,10 @@
   "framework": "vite",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
-  "crons": [{ "path": "/api/notifications", "schedule": "0 18 * * *" }, { "path": "/api/insights", "schedule": "*/5 * * * *" }],
+  "crons": [
+    { "path": "/api/notifications", "schedule": "0 18 * * *" },
+    { "path": "/api/insights", "schedule": "0 18 * * *" }
+  ],
   "headers": [
     {
       "source": "/(.*)",
