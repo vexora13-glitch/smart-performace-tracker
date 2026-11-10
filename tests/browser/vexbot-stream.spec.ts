@@ -2,6 +2,25 @@ import { expect, test } from '@playwright/test';
 import { CLIENT, fixture } from '../helpers/portal-fixture';
 import { writeFile } from 'node:fs/promises';
 
+test('an authoritative saved answer completes without waiting for a stalled HTTP EOF', async ({ page }) => {
+  await fixture(page, 'client');
+  const result = await page.evaluate(async () => {
+    const original = window.fetch;
+    let cancelled = false;
+    window.fetch = async (input, init) => {
+      if (input !== '/api/vexbot') return original(input, init);
+      return new Response(new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode('event: answer\ndata: {"conversation":{"id":"saved"},"messages":[]}\n\n')); }, cancel() { cancelled = true; } }), { headers: { 'Content-Type': 'text/event-stream' } });
+    };
+    try {
+      const { streamQuestion } = await import('/src/vexbot/chat-stream.ts' as string);
+      const answer = await streamQuestion({ action: 'ask' }, new AbortController().signal, () => {});
+      return { answer, cancelled };
+    } finally { window.fetch = original; }
+  });
+  expect(result.answer.conversation.id).toBe('saved');
+  expect(result.cancelled).toBe(true);
+});
+
 test('streaming chat displays the user immediately, handles interrupted replies and cancels requests', async ({ page }) => {
   const { errors } = await fixture(page, 'client');
   await page.route('**/api/vexbot', route => {

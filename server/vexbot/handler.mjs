@@ -2,6 +2,9 @@
 // rechecked against the database on every call (including saved answers and spoken replies), and every
 // knowledge or settings change requires an administrator session verified with MFA (AAL2).
 import { selectHistory, retrievalQueries } from './context.mjs';
+import { transcriptionPrompt } from './speech.mjs';
+import { selectedFile, selectedMessage, sectionNote } from './portal-context.mjs';
+import { directBusinessAnswer, followUpClarification, VOICE_NO_ANSWER } from './direct-answer.mjs';
 import { INTERRUPTED_VOICE_TEXT, realtimeReadiness } from './realtime.mjs';
 import { randomUUID } from 'node:crypto';
 import { authenticate, check, database, method, respondError } from '../runtime.mjs';
@@ -268,9 +271,29 @@ const failedText = (profile) =>
  */
 async function plan(ctx, { workspace, question, history, settings, attachments, recent }) {
   const lookupStarted = performance.now();
+  const message = await selectedMessage(ctx.db, workspace, ctx.portalContext, question);
+  if (message) return message;
+  const direct = directBusinessAnswer(question, settings.business_profile);
+  if (direct)
+    return {
+      reply: direct,
+      outcome: 'answered',
+      sources: [
+        {
+          id: 'P',
+          kind: 'profile',
+          title: 'Vexora business profile',
+          content: profileText(settings.business_profile),
+        },
+      ],
+    };
   const inv = await inventory(ctx.db, workspace);
   if (ctx.timings) ctx.timings.catalogue = performance.now() - lookupStarted;
-  const choice = resolve(question, inv, { attachments, recent });
+  const selected = selectedFile(inv, ctx.portalContext);
+  const choice = resolve(question, inv, {
+    attachments,
+    recent: selected.length ? selected : recent,
+  });
   const listed = (names) =>
     names.length
       ? ` Files I can read here: ${names
@@ -292,6 +315,28 @@ async function plan(ctx, { workspace, question, history, settings, attachments, 
         : `There are no files I can read in this workspace yet. Files shared by Vexora appear under Shared files, and your uploads become available after they are scanned and approved.`,
     };
   if (choice.targets) {
+    if (
+      /^(?:please\s+|can you\s+|could you\s+)?open\b/i.test(question.trim()) &&
+      !/\b(?:and|then|summari[sz]e|summary|explain|read|compare)\b/i.test(question) &&
+      choice.targets.length === 1 &&
+      choice.targets[0].kind === 'file'
+    ) {
+      const file = choice.targets[0];
+      return {
+        reply: `Opening ${file.name}.`,
+        outcome: 'answered',
+        openFile: file.id,
+        sources: [
+          {
+            id: 'F1',
+            kind: 'file',
+            file_id: file.id,
+            title: file.name,
+            content: `Shared workspace file: ${file.name}`,
+          },
+        ],
+      };
+    }
     const retrievalStarted = performance.now();
     const read = await Promise.all(choice.targets.map((item) => readTarget(ctx.db, item)));
     if (ctx.timings) ctx.timings.retrieval = performance.now() - retrievalStarted;
@@ -358,7 +403,14 @@ async function answer(
       ...none,
     };
   const planned = await plan(ctx, { workspace, question, history, settings, attachments, recent });
-  if (planned.reply) return { outcome: 'no_answer', content: planned.reply, ...none };
+  if (planned.reply)
+    return {
+      outcome: planned.outcome ?? 'no_answer',
+      content: planned.reply,
+      cited: [],
+      usesProfile: planned.sources?.some((s) => s.kind === 'profile') ?? false,
+      openFile: planned.openFile,
+    };
   const note = planned.notes.length ? `\n\n${planned.notes.join(' ')}` : '';
   if (!ctx.provider)
     return { outcome: 'unavailable', content: notConfiguredText(profile) + note, ...none };
@@ -370,6 +422,7 @@ async function answer(
     result = validateAnswer(
       await ctx.provider.answer({
         settings,
+        portalContext: sectionNote(ctx.portalContext),
         question,
         sources,
         history,
@@ -417,7 +470,7 @@ async function answer(
     };
   }
   if (!result.answered)
-    return { outcome: 'no_answer', content: noAnswerText(profile) + note, ...none };
+    return { outcome: 'no_answer', content: (followUpClarification(question) || noAnswerText(profile)) + note, ...none };
   const cited = new Map();
   for (const id of result.cited) {
     const source = sources.find((s) => s.id === id);
@@ -609,6 +662,10 @@ const ACTIONS = {
   },
 
   async ask(ctx, input) {
+    ctx.portalContext =
+      input.portal_context && typeof input.portal_context === 'object'
+        ? { ...input.portal_context }
+        : {};
     const workspace = workspaceInput(ctx, input.workspace_id);
     const question = requiredText(input.question, 'question', 2000);
     const attachments = Array.isArray(input.attachments)
@@ -701,6 +758,7 @@ const ACTIONS = {
       })(),
     ]);
     const { conversation, history, recent } = state;
+    ctx.mark?.('history_loaded');
     // Save the client's words before generation/streaming. A lost connection cannot erase the question.
     const medium = input.medium === 'voice' || input.speak === true ? 'voice' : 'text';
     const asked =
@@ -725,26 +783,23 @@ const ACTIONS = {
       asked.attachments = attachments;
     }
     const retrievalStarted = performance.now();
+    ctx.mark?.('question_saved');
     let result;
     try {
       result = await answer(ctx, { workspace, question, history, settings, attachments, recent });
     } catch (error) {
       if (ctx.partialText)
-        await ctx.db
-          .from('vexbot_messages')
-          .insert({
-            conversation_id: conversation.id,
-            role: 'assistant',
-            content: `[Partial response: connection interrupted]\n${ctx.partialText}`.slice(
-              0,
-              20000,
-            ),
-            outcome: 'unavailable',
-            medium,
-          });
+        await ctx.db.from('vexbot_messages').insert({
+          conversation_id: conversation.id,
+          role: 'assistant',
+          content: `[Partial response: connection interrupted]\n${ctx.partialText}`.slice(0, 20000),
+          outcome: 'unavailable',
+          medium,
+        });
       throw error;
     }
     if (ctx.timings) ctx.timings.answer = performance.now() - retrievalStarted;
+    ctx.mark?.('answer_ready');
     await requireAccess(ctx, workspace);
     const persistenceStarted = performance.now();
     const reply = check(
@@ -763,6 +818,7 @@ const ACTIONS = {
         .single(),
     );
     const documents = result.cited.filter((c) => c.kind === 'document');
+    ctx.mark?.('assistant_saved');
     const files = result.cited.filter((c) => c.kind === 'file');
     // Before the workspace-files migration the file citation is shown now but not kept with the answer.
     await Promise.all([
@@ -780,16 +836,14 @@ const ACTIONS = {
         : null,
       files.length
         ? optionalRows(
-            ctx.db
-              .from('vexbot_file_citations')
-              .insert(
-                files.map((c) => ({
-                  message_id: reply.id,
-                  file_id: c.file_id,
-                  file_name: c.title,
-                  excerpt: c.excerpt,
-                })),
-              ),
+            ctx.db.from('vexbot_file_citations').insert(
+              files.map((c) => ({
+                message_id: reply.id,
+                file_id: c.file_id,
+                file_name: c.title,
+                excerpt: c.excerpt,
+              })),
+            ),
           )
         : null,
     ]);
@@ -799,7 +853,9 @@ const ACTIONS = {
         .update({ updated_at: new Date().toISOString() })
         .eq('id', conversation.id),
     );
+    ctx.mark?.('conversation_saved');
     const [user, assistant] = await present(ctx, conversation, [asked, reply]);
+    ctx.mark?.('sources_checked');
     if (ctx.timings) ctx.timings.persistence = performance.now() - persistenceStarted;
     if (!assistant.withdrawn && files.length && !assistant.citations.some((c) => c.kind === 'file'))
       assistant.citations.push(
@@ -812,8 +868,16 @@ const ACTIONS = {
         })),
       );
     // Voice mode asks for the spoken reply in the same request, so it plays without a second round trip.
-    if (ctx.emit)
-      ctx.emit('answer', { conversation: { id: conversation.id }, messages: [user, assistant] });
+    const visible = {
+      conversation: {
+        id: conversation.id,
+        title: conversation.title,
+        workspace_id: conversation.workspace_id,
+      },
+      messages: [user, assistant],
+      open_file: result.openFile,
+    };
+    if (ctx.emit) ctx.emit('answer', visible);
     const spoken =
       input.speak === true && !assistant.withdrawn && assistant.outcome !== 'unavailable'
         ? await synthesise(ctx, assistant.content)
@@ -825,6 +889,7 @@ const ACTIONS = {
         workspace_id: conversation.workspace_id,
       },
       messages: [user, assistant],
+      open_file: result.openFile,
       contact: {
         email: settings.business_profile?.contact_email ?? null,
         phone: settings.business_profile?.contact_phone ?? null,
@@ -955,18 +1020,16 @@ const ACTIONS = {
     const id = randomUUID();
     const path = `${workspace ?? 'business'}/${id}/${file.safeName}`;
     check(
-      await ctx.db
-        .from('vexbot_uploads')
-        .insert({
-          id,
-          workspace_id: workspace,
-          uploaded_by: ctx.user.id,
-          purpose,
-          name: file.name,
-          path,
-          mime_type: file.mime,
-          size_bytes: file.size,
-        }),
+      await ctx.db.from('vexbot_uploads').insert({
+        id,
+        workspace_id: workspace,
+        uploaded_by: ctx.user.id,
+        purpose,
+        name: file.name,
+        path,
+        mime_type: file.mime,
+        size_bytes: file.size,
+      }),
     );
     const signed = check(await ctx.db.storage.from(BUCKET).createSignedUploadUrl(path));
     return { upload_id: id, path, token: signed.token };
@@ -1127,6 +1190,7 @@ const ACTIONS = {
         `A ${document.status.replace('_', ' ')} document cannot move to ${String(input.to).replace('_', ' ')}.`,
       );
     const passages = input.to === 'published' ? pageChunks(document.content) : null;
+    ctx.mark?.('document_loaded');
     if (input.to === 'published' && !passages.length)
       throw new HttpError(409, 'Add reviewed text before publishing.');
     check(
@@ -1138,6 +1202,7 @@ const ACTIONS = {
       }),
     );
     await audit(ctx, `document.${input.to}`, document.id);
+    ctx.mark?.('document_changed');
     return {
       document: check(
         await ctx.db.from('vexbot_documents').select('*').eq('id', document.id).single(),
@@ -1214,6 +1279,11 @@ export function createHandler({
   return async function handler(req, res) {
     res.setHeader('Cache-Control', 'no-store');
     const started = performance.now();
+    const diagnosticId = randomUUID().slice(0, 8);
+    const mark = phase => {
+      if (process.env.VEXBOT_TIMING_LOG === 'true') console.info('[vexbot:timing]', JSON.stringify({ request: diagnosticId, phase, ms: Math.round(performance.now() - started) }));
+    };
+    mark('request');
     const timings = {};
     const controller = new AbortController();
     let heartbeat;
@@ -1224,6 +1294,7 @@ export function createHandler({
       method(req, ['POST']);
       const db = getDatabase();
       const { user, profile } = await authenticate(req, db);
+      mark('authenticated');
       timings.authentication = performance.now() - started;
       const token = claims(req);
       const ctx = {
@@ -1239,6 +1310,7 @@ export function createHandler({
         signal: AbortSignal.any([controller.signal, AbortSignal.timeout(55000)]),
         started,
         timings,
+        mark,
       };
       const input = req.body && typeof req.body === 'object' ? req.body : {};
       const action = Object.hasOwn(ACTIONS, input.action) ? ACTIONS[input.action] : null;
@@ -1257,11 +1329,13 @@ export function createHandler({
           if (!res.destroyed) res.write(': keepalive\n\n');
         }, 10000);
         const result = await action(ctx, input);
+        mark('finished');
         timings.total = performance.now() - started;
         ctx.emit('result', { ...result, timings });
         return res.end();
       }
       const result = await action(ctx, input);
+      mark('finished');
       if (input.action === 'ask') {
         timings.total = performance.now() - started;
         res.setHeader(
@@ -1294,21 +1368,29 @@ export function createHandler({
  * source ids or workspace from a model tool. It reuses the text path's visibility,
  * file resolution, withdrawal, correction and citation rules. */
 export async function voiceContext(req, input, db = database()) {
-  let ctx;
+  let ctx, refreshing;
+  const portalContext =
+    input.portal_context && typeof input.portal_context === 'object'
+      ? { ...input.portal_context }
+      : {};
   const workspace = input.workspace_id == null ? null : uuid(input.workspace_id);
-  const refresh = async () => {
-    const { user, profile } = await authenticate(req, db);
-    const token = claims(req);
-    ctx = {
-      db,
-      user,
-      profile,
-      admin: profile.role === 'admin',
-      iat: Number(token.iat) || 0,
-      aal: token.aal,
-    };
-    await requireAccess(ctx, workspaceInput(ctx, workspace));
-  };
+  const refresh = () =>
+    (refreshing ??= (async () => {
+      const { user, profile } = await authenticate(req, db);
+      const token = claims(req);
+      ctx = {
+        db,
+        user,
+        profile,
+        admin: profile.role === 'admin',
+        iat: Number(token.iat) || 0,
+        aal: token.aal,
+        portalContext,
+      };
+      await requireAccess(ctx, workspaceInput(ctx, workspace));
+    })().finally(() => {
+      refreshing = null;
+    }));
   await refresh();
   const conversation = input.conversation_id
     ? await conversationFor(ctx, input.conversation_id)
@@ -1341,6 +1423,10 @@ export async function voiceContext(req, input, db = database()) {
     workspace,
     conversation,
     refresh,
+    selectFile(id) {
+      portalContext.file_id = uuid(id);
+      delete portalContext.message_id;
+    },
     async complete(reason) {
       check(await db.rpc('portal_complete_vexbot', { conversation: conversation.id, reason }));
     },
@@ -1360,6 +1446,11 @@ export async function voiceContext(req, input, db = database()) {
     async history() {
       return selectHistory(await shown());
     },
+    async vocabulary() {
+      await refresh();
+      const inv = await inventory(db, workspace);
+      return transcriptionPrompt([...inv.files, ...inv.documents]);
+    },
     async snapshot() {
       return { conversation, messages: await shown() };
     },
@@ -1377,20 +1468,23 @@ export async function voiceContext(req, input, db = database()) {
         recent: recent.map((c) => ({ kind: c.kind, id: c.id })),
       });
       await refresh();
-      return { ...result, history, fallback: noAnswerText(settings.business_profile ?? {}) };
+      return {
+        ...result,
+        notes: [...(result.notes ?? []), sectionNote(ctx.portalContext)].filter(Boolean),
+        history,
+        fallback: followUpClarification(question) || VOICE_NO_ANSWER,
+      };
     },
     async userMessage(content, at = new Date().toISOString()) {
       await refresh();
       check(
-        await db
-          .from('vexbot_messages')
-          .insert({
-            conversation_id: conversation.id,
-            role: 'user',
-            content: requiredText(content, 'transcript', 2000),
-            medium: 'voice',
-            created_at: at,
-          }),
+        await db.from('vexbot_messages').insert({
+          conversation_id: conversation.id,
+          role: 'user',
+          content: requiredText(content, 'transcript', 2000),
+          medium: 'voice',
+          created_at: at,
+        }),
       );
     },
     async assistantMessage(
@@ -1427,28 +1521,24 @@ export async function voiceContext(req, input, db = database()) {
         ];
         if (docs.length)
           check(
-            await db
-              .from('vexbot_citations')
-              .insert(
-                docs.map((s) => ({
-                  message_id: row.id,
-                  document_id: s.document_id,
-                  excerpt: s.content.slice(0, 600),
-                })),
-              ),
+            await db.from('vexbot_citations').insert(
+              docs.map((s) => ({
+                message_id: row.id,
+                document_id: s.document_id,
+                excerpt: s.content.slice(0, 600),
+              })),
+            ),
           );
         if (files.length)
           await optionalRows(
-            db
-              .from('vexbot_file_citations')
-              .insert(
-                files.map((s) => ({
-                  message_id: row.id,
-                  file_id: s.file_id,
-                  file_name: s.title,
-                  excerpt: s.content.slice(0, 600),
-                })),
-              ),
+            db.from('vexbot_file_citations').insert(
+              files.map((s) => ({
+                message_id: row.id,
+                file_id: s.file_id,
+                file_name: s.title,
+                excerpt: s.content.slice(0, 600),
+              })),
+            ),
           );
       }
       check(

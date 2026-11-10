@@ -53,6 +53,40 @@ test('live voice admission is opt-in and preserves the audited model and voice',
   assert.equal(config.audio.input.turn_detection.interrupt_response, true);
   assert.equal(config.tool_choice.name, 'workspace_knowledge');
   assert.ok(config.instructions.includes('Later corrections'));
+  assert.match(config.audio.input.transcription.prompt, /Vexora, Vexbot, Smart Express/);
+});
+
+test('recognised turns retrieve directly, skip the query-planning model round and deduplicate transcripts', async t => {
+  const questions = [];
+  const f = await fixture(t, { async lookup(question) { questions.push(question); return { sources: [{ id: 'S1', title: 'Hours', content: 'Support is weekdays.' }], history: [], fallback: 'Please message the team.' }; } });
+  f.socket.event({ type: 'input_audio_buffer.speech_started', item_id: 'u-direct' });
+  f.socket.event({ type: 'input_audio_buffer.speech_stopped', item_id: 'u-direct' });
+  assert.equal(f.socket.sent.filter(e => e.type === 'response.create').length, 0, 'no redundant model query while transcription finishes');
+  for (let i = 0; i < 2; i++) f.socket.event({ type: 'conversation.item.input_audio_transcription.completed', item_id: 'u-direct', transcript: 'Support hours?' });
+  await tick(); await tick();
+  assert.deepEqual(questions, ['Support hours?']);
+  assert.equal(f.written.filter(m => m.role === 'user').length, 1);
+  assert.equal(f.socket.sent.at(-1).response.tool_choice.name, 'prepare_answer');
+  response(f.socket, 'approved', 'prepare_answer', { kind: 'grounded', answered: true, answer: 'Support is weekdays.', sources: ['S1'] });
+  await tick(); await tick();
+  assert.equal(f.socket.sent.filter(e => e.type === 'response.create').length, 2);
+  assert.match(f.socket.sent.at(-1).response.instructions, /Support is weekdays/);
+});
+
+test('a newer recognised turn supersedes an outstanding lookup without speaking stale evidence', async t => {
+  let resolveOld;
+  const questions = [];
+  const f = await fixture(t, { lookup(question) { questions.push(question); return question === 'Old request' ? new Promise(resolve => { resolveOld = resolve; }) : Promise.resolve({ reply: 'New reply' }); } });
+  for (const [item_id, transcript] of [['old', 'Old request'], ['new', 'New request']]) {
+    f.socket.event({ type: 'input_audio_buffer.speech_started', item_id });
+    f.socket.event({ type: 'input_audio_buffer.speech_stopped', item_id });
+    f.socket.event({ type: 'conversation.item.input_audio_transcription.completed', item_id, transcript });
+    await tick(); await tick();
+  }
+  assert.deepEqual(questions, ['Old request', 'New request']);
+  resolveOld({ reply: 'Stale reply' }); await tick(); await tick();
+  assert.equal(f.socket.sent.filter(e => e.type === 'response.create').length, 1);
+  assert.match(f.socket.sent.at(-1).response.instructions, /New reply/);
 });
 
 test('SDP exchange uses the server credential, approved config and privacy-preserving identifier', async () => {
@@ -98,6 +132,18 @@ test('invented citations fail closed to the no-evidence answer', async t => {
   assert.ok(!socket.sent.at(-1).response.instructions.includes('Tomorrow!'));
 });
 
+test('incomplete generated audio never persists the full approved text as completely heard', async t => {
+  const { supervisor, socket, written } = await fixture(t);
+  supervisor.greet();
+  const metadata = socket.sent.at(-1).response.metadata;
+  socket.event({ type: 'response.created', response: { id: 'short-audio', metadata } });
+  socket.event({ type: 'output_audio_buffer.started', response_id: 'short-audio' });
+  socket.event({ type: 'response.done', response: { id: 'short-audio', status: 'incomplete', output: [] } });
+  socket.event({ type: 'output_audio_buffer.stopped', response_id: 'short-audio' });
+  await tick(); await tick();
+  assert.equal(written.at(-1).interrupted, true);
+});
+
 test('hangup retries transient failure and accepts a provider-confirmed missing call', async () => {
   let attempts = 0;
   await hangUp('rtc_test', async () => { if (++attempts === 1) throw new Error('network'); return new Response('', { status: 404 }); });
@@ -119,9 +165,11 @@ test('a response created after its turn was interrupted is cancelled, never reus
   const previous = socket.sent.at(-1).response.metadata;
   socket.event({ type: 'input_audio_buffer.speech_started', item_id: 'new-user' });
   socket.event({ type: 'input_audio_buffer.speech_stopped' });
+  socket.event({ type: 'conversation.item.input_audio_transcription.completed', item_id: 'new-user', transcript: 'New topic' });
   socket.event({ type: 'response.created', response: { id: 'late', metadata: previous } });
   assert.ok(socket.sent.some(e => e.type === 'response.cancel' && e.response_id === 'late'));
   socket.event({ type: 'response.done', response: { id: 'late', status: 'cancelled' } });
+  await tick(); await tick();
   assert.equal(socket.sent.at(-1).type, 'response.create');
   assert.notEqual(socket.sent.at(-1).response.metadata.vexbot_nonce, previous.vexbot_nonce);
   assert.deepEqual(socket.sent.at(-1).response.output_modalities, ['text']);

@@ -5,6 +5,7 @@ import { motionTokens } from '../design/motion-tokens';
 import { Archive, CheckCheck, MessageSquare, Plus, Send } from 'lucide-react';
 import { api, db, unread, unwrap } from '../services/portal';
 import type { PortalData, Profile } from '../types/portal';
+import { ASK_EVENT, CONTEXT_EVENT } from '../vexbot/Vexbot';
 
 export function Chat({
   profile,
@@ -49,6 +50,16 @@ export function Chat({
     .map((row) => row.id)
     .join(',');
   const latestMessage = messages.at(-1)?.id;
+  useEffect(() => {
+    window.dispatchEvent(
+      new CustomEvent(CONTEXT_EVENT, {
+        detail: { workspace: conversation?.workspace_id, thread_id: selected },
+      }),
+    );
+    return () => {
+      window.dispatchEvent(new CustomEvent(CONTEXT_EVENT, { detail: {} }));
+    };
+  }, [selected, conversation?.workspace_id]);
   useEffect(() => {
     const changed = previousThread.current !== selected;
     previousThread.current = selected;
@@ -408,6 +419,25 @@ export function Chat({
                           · {new Date(row.created_at).toLocaleString()}
                         </small>
                         <p>{row.body}</p>
+                        <button
+                          type="button"
+                          className="text-button"
+                          aria-label="Ask Vexbot about this message"
+                          onClick={() =>
+                            window.dispatchEvent(
+                              new CustomEvent(ASK_EVENT, {
+                                detail: {
+                                  workspace: conversation.workspace_id,
+                                  thread_id: conversation.id,
+                                  message_id: row.id,
+                                  question: 'Can you read this message?',
+                                },
+                              }),
+                            )
+                          }
+                        >
+                          Ask Vexbot
+                        </button>
                         {own && (
                           <span className="read-receipt">
                             <CheckCheck size={13} />

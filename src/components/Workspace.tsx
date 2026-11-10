@@ -1,4 +1,4 @@
-import { ASK_EVENT } from '../vexbot/Vexbot';
+import { ASK_EVENT, CONTEXT_EVENT } from '../vexbot/Vexbot';
 import { trackActivity } from '../services/activity';
 import {
   lazy,
@@ -91,6 +91,9 @@ export function Workspace({
   const [preview, setPreview] = useState<{ blob: Blob; file: PortalFile } | null>(null);
   const previewDialog = useRef<HTMLDialogElement>(null);
   async function previewFile(file: PortalFile) {
+    window.dispatchEvent(
+      new CustomEvent(CONTEXT_EVENT, { detail: { workspace: client.id, file_id: file.id } }),
+    );
     try {
       const blob = unwrap(await db().storage.from('portal-private').download(file.path));
       setPreview({ blob: new Blob([blob], { type: file.mime_type }), file });
@@ -620,6 +623,7 @@ export function Workspace({
                               new CustomEvent(ASK_EVENT, {
                                 detail: {
                                   workspace: client.id,
+                                  file_id: file.id,
                                   question: `Summarize “${file.name}”`,
                                 },
                               }),
@@ -879,7 +883,10 @@ export function Workspace({
         className="document-preview-dialog"
         ref={previewDialog}
         aria-label={preview ? `Preview ${preview.file.name}` : 'Document preview'}
-        onClose={() => setPreview(null)}
+        onClose={() => {
+          setPreview(null);
+          window.dispatchEvent(new CustomEvent(CONTEXT_EVENT, { detail: {} }));
+        }}
       >
         <div className="panel-heading">
           <h2>{preview?.file.name}</h2>

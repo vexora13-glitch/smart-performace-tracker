@@ -20,7 +20,7 @@ export function describe(item) {
 }
 export const isSummary = question => /\bsummari[sz]e|\bsummary|\boverview|\b(?:two|few|\d+) minutes?\b/i.test(question);
 export const isComparison = question => /\bcompar|\bdiffer|\bversus\b|\bvs\b/i.test(question);
-export const isFollowUp = question => /\b(?:it|that|those|they|deliverables?|cost|pricing|price|timeline|milestones?|responsibilities|scope)\b/i.test(question);
+export const isFollowUp = question => /\b(?:it|that|these|those|they|deliverables?|cost|pricing|price|timeline|milestones?|responsibilities|scope|simpler|second point|first point|tell me more|where.+came from)\b/i.test(question);
 
 export function catalogueMatch(question, items) {
   const asked = normaliseTitle(question);

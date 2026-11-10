@@ -234,6 +234,7 @@ test.describe('desktop Chrome', () => {
     await page.getByTestId('vexbot-hide').click();
 
     const viewer = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await viewer.bringToFront();
     await login(viewer, seed().vera.email);
     await expect(viewer.getByText('Your access is read-only, so uploads are turned off.')).toBeVisible();
     await expect(viewer.getByTestId('workspace-private-upload')).toHaveCount(0);
@@ -250,6 +251,7 @@ test.describe('desktop Chrome', () => {
 
     // Staff retire the plan; the client's saved answer is withdrawn on next view.
     const staff = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await staff.bringToFront();
     await login(staff, seed().staff.email);
     await staff.getByRole('button', { name: 'Vexbot' }).first().click();
     await expect(staff.getByTestId('vexbot-aal')).toHaveText(/View only/, { timeout: 5000 });
@@ -264,6 +266,7 @@ test.describe('desktop Chrome', () => {
     await expect(staff.getByRole('status').filter({ hasText: 'Retired' })).toBeVisible();
     await shot(staff, 'desktop-15-admin-retired-source');
 
+    await page.bringToFront();
     await page.getByTestId('vexbot-history').click();
     await page.getByTestId('vexbot-history-list').getByRole('button', { name: /When is the launch workshop scheduled/ }).first().click();
     await expect(page.getByTestId('vexbot-log')).toContainText('no longer available because a document it relied on has been withdrawn');

@@ -26,8 +26,8 @@ export function createVoiceHandler({ getDatabase = database, getContext = voiceC
       const context = await getContext(req, input, db);
       lease = await admit(db, context, terminate);
       res.on('close', disconnect);
-      const history = await context.history();
-      const config = portalRealtimeSession(history);
+      const [history, vocabulary] = await Promise.all([context.history(), context.vocabulary?.()]);
+      const config = portalRealtimeSession(history, vocabulary);
       call = await connect(input.sdp, config, context.user);
       check(await db.from('vexbot_voice_sessions').update({ call_id: call.callId, state: 'live' }).eq('id', lease));
       if (closed) {

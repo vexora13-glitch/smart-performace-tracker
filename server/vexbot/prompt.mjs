@@ -52,10 +52,10 @@ export function systemPrompt(settings) {
 }
 
 /** Sources are passages from published documents plus, optionally, the business profile as "P". */
-export function userPrompt({ question, sources, history }) {
+export function userPrompt({ question, sources, history, portalContext = '' }) {
   const blocks = sources.map((source) => `<source id="${source.id}" type="${source.label ?? 'document'}" title="${fence(source.title)}">\n${fence(source.content)}\n</source>`).join('\n');
   const turns = history.map((turn) => `${turn.role === 'user' ? 'Client' : 'Vexbot'}: ${fence(turn.content)}`).join('\n');
-  return `<sources>\n${blocks || '(none)'}\n</sources>\n\n<conversation>\n${turns || '(new conversation)'}\n</conversation>\n\n<question>\n${fence(question)}\n</question>`;
+  return `<portal-context>${fence(portalContext)}</portal-context>\n\n<sources>\n${blocks || '(none)'}\n</sources>\n\n<conversation>\n${turns || '(new conversation)'}\n</conversation>\n\n<question>\n${fence(question)}\n</question>`;
 }
 
 export const ANSWER_SCHEMA = {

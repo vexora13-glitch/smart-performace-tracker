@@ -10,6 +10,8 @@ import {
   useEffect,
   useRef,
   useState,
+  lazy,
+  Suspense,
   type FormEvent,
   type KeyboardEvent,
 } from 'react';
@@ -52,6 +54,7 @@ import {
   type VoiceProblem,
 } from './voice.ts';
 import { RealtimeVoice, realtimeBlocked } from './realtime.ts';
+import { localWakeAvailable, WakeWordListener, WAKE_PHRASE } from './wake-word.ts';
 import { streamQuestion } from './chat-stream';
 import {
   UPLOAD_ACCEPT,
@@ -63,6 +66,7 @@ import {
 import { api, db, unwrap } from '../services/portal';
 import type { Client, Profile } from '../types/portal';
 import './vexbot.css';
+const DocumentPreview = lazy(() => import('../components/DocumentPreview'));
 
 // The canvas is one fixed size, then scaled with a transform, so walking never re-allocates WebGL buffers.
 const CANVAS_HEIGHT = 486;
@@ -112,6 +116,7 @@ type Talk =
   | 'transcribing'
   | 'thinking'
   | 'speaking'
+  | 'interrupted'
   | 'reconnecting';
 const TALK_TEXT: Record<Talk, string> = {
   off: '',
@@ -121,9 +126,17 @@ const TALK_TEXT: Record<Talk, string> = {
   transcribing: 'Got it…',
   thinking: 'Thinking…',
   speaking: 'Speaking…',
+  interrupted: 'Interrupted. Go ahead.',
   reconnecting: 'Connection interrupted. Reconnecting…',
 };
 export const ASK_EVENT = 'vexbot:prefill';
+export const CONTEXT_EVENT = 'vexbot:context';
+type PortalSelection = {
+  workspace?: string;
+  file_id?: string;
+  message_id?: string;
+  thread_id?: string;
+};
 type Preferences = { hidden: boolean; still: boolean; speak: boolean };
 
 function readPreferences(): Preferences {
@@ -219,6 +232,32 @@ export function Vexbot({
   const [revealSources, setRevealSources] = useState<string | null>(null);
   const session = useRef<VoiceSession | null>(null);
   const liveSession = useRef<RealtimeVoice | null>(null);
+  const sourceDialog = useRef<HTMLDialogElement>(null);
+  const [sourcePreview, setSourcePreview] = useState<{ blob: Blob; name: string } | null>(null);
+  useEffect(() => {
+    if (sourcePreview) sourceDialog.current?.showModal();
+  }, [sourcePreview]);
+  const portalSelection = useRef<PortalSelection>({});
+  const wake = useRef<WakeWordListener | null>(null);
+  const [wakeSupported, setWakeSupported] = useState(false);
+  const [wakeArmed, setWakeArmed] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void localWakeAvailable().then((value) => {
+      if (active) setWakeSupported(value);
+    });
+    return () => {
+      active = false;
+      wake.current?.stop();
+    };
+  }, []);
+  useEffect(() => {
+    const listener = (event: Event) => {
+      portalSelection.current = (event as CustomEvent<PortalSelection>).detail ?? {};
+    };
+    window.addEventListener(CONTEXT_EVENT, listener);
+    return () => window.removeEventListener(CONTEXT_EVENT, listener);
+  }, []);
   const [liveVoice, setLiveVoice] = useState(false);
   const [playbackBlocked, setPlaybackBlocked] = useState(false);
   const player = useRef<HTMLAudioElement | null>(null);
@@ -570,6 +609,7 @@ export function Vexbot({
       recorder.current?.cancel();
       stopAudio();
       talkRun.current++;
+      wake.current?.stop();
       greetingRequest.current?.abort();
       session.current?.close();
       void liveSession.current?.close();
@@ -591,6 +631,9 @@ export function Vexbot({
   useEffect(() => {
     cancelInteraction();
     endTalk();
+    sourceDialog.current?.close();
+    setSourcePreview(null);
+    portalSelection.current = {};
   }, [workspaceId]);
   useEffect(() => {
     const { data } = db().auth.onAuthStateChange((event) => {
@@ -604,7 +647,9 @@ export function Vexbot({
   }, [access, workspace, admin]);
 
   // "Ask Vexbot about this file" from Shared files: opens text chat in that workspace with the question ready.
-  const prefill = useRef<(detail: { workspace: string; question: string }) => void>(() => {});
+  const prefill = useRef<
+    (detail: PortalSelection & { workspace: string; question: string }) => void
+  >(() => {});
   useEffect(() => {
     const listener = (event: Event) => prefill.current((event as CustomEvent).detail);
     window.addEventListener(ASK_EVENT, listener);
@@ -726,6 +771,9 @@ export function Vexbot({
   }
 
   async function speak(message: VexMessage) {
+    wake.current?.stop();
+    wake.current = null;
+    setWakeArmed(false);
     if (!service?.voice || message.outcome === 'unavailable') return;
     const epoch = operation.current;
     stopAudio();
@@ -780,7 +828,11 @@ export function Vexbot({
     let incoming = '';
     let frame = 0;
     try {
-      const result = await streamQuestion<{ conversation: Summary; messages: VexMessage[] }>(
+      const result = await streamQuestion<{
+        conversation: Summary;
+        messages: VexMessage[];
+        open_file?: string;
+      }>(
         {
           action: 'ask',
           workspace_id: chosen,
@@ -789,6 +841,10 @@ export function Vexbot({
           medium: spoken ? 'voice' : 'text',
           user_message_id: userMessageId,
           attachments: ready.map((row) => row.id),
+          portal_context: {
+            ...(portalSelection.current.workspace === chosen ? portalSelection.current : {}),
+            page,
+          },
         },
         controller.signal,
         (text) => {
@@ -805,6 +861,7 @@ export function Vexbot({
       setConversation(result.conversation.id);
       setMessages((list) => [...list.filter((m) => m.id !== temp.id), ...result.messages]);
       setAttachments([]);
+      if (result.open_file) void previewSource(result.open_file, chosen);
       void loadHistory(chosen);
       const reply = result.messages[1] as VexMessage;
       if (reply.outcome !== 'unavailable' && (spoken || preferences.speak) && service?.voice)
@@ -872,6 +929,9 @@ export function Vexbot({
   }
 
   async function toggleVoice() {
+    wake.current?.stop();
+    wake.current = null;
+    setWakeArmed(false);
     if (voice === 'transcribing' || voice === 'connecting') return;
     if (voice === 'recording' || voice === 'paused') {
       const turn = recorder.current;
@@ -947,6 +1007,9 @@ export function Vexbot({
   }
 
   function endTalk(message = '') {
+    wake.current?.stop();
+    wake.current = null;
+    setWakeArmed(false);
     if (talkActive.current) completeVexbot(conversationRef.current);
     const ending = liveSession.current?.close();
     liveSession.current = null;
@@ -971,6 +1034,9 @@ export function Vexbot({
 
   async function startTalk(recorded = false) {
     if (talkActive.current) return;
+    wake.current?.stop();
+    wake.current = null;
+    setWakeArmed(false);
     setNotice('');
     setRevealSources(null);
     if (!service?.voice && !(service?.realtime?.available && !recorded)) {
@@ -1010,6 +1076,13 @@ export function Vexbot({
       const live = new RealtimeVoice({
         workspace: target,
         conversation: conversationRef.current,
+        context: {
+          ...(portalSelection.current.workspace === target ? portalSelection.current : {}),
+          page,
+        },
+        openFile(id) {
+          if (run === talkRun.current) void previewSource(id, target);
+        },
         async token() {
           const current = unwrap(await db().auth.getSession()).session;
           if (!current) throw new Error('Sign in to continue.');
@@ -1185,6 +1258,10 @@ export function Vexbot({
           workspace_id: target,
           conversation_id: conversationRef.current,
           question: text,
+          portal_context: {
+            ...(portalSelection.current.workspace === target ? portalSelection.current : {}),
+            page,
+          },
           attachments: [],
           speak: true,
           medium: 'voice',
@@ -1200,6 +1277,7 @@ export function Vexbot({
       setMessages((list) => [...list, ...result.messages]);
       void loadHistory(target);
       const reply = result.messages[1] as VexMessage;
+      if (result.open_file) void previewSource(result.open_file, target);
       if (reply.outcome === 'unavailable') {
         endTalk(`${reply.content} Once resolved, retry Talk or use Ask.`);
         return;
@@ -1240,15 +1318,91 @@ export function Vexbot({
     if (sources && reply) setRevealSources(reply.id);
   }
 
-  prefill.current = ({ workspace: target, question: text }) => {
+  prefill.current = ({ workspace: target, question: text, ...selection }) => {
     if (!admin && !access[target]) return;
     if (!open) openPanel();
     if (target !== workspace) chooseWorkspace(target);
+    portalSelection.current = { ...selection, workspace: target };
     setQuestion(text);
     requestAnimationFrame(() => inputRef.current?.focus());
   };
 
+  async function armWake() {
+    if (wake.current) {
+      wake.current.stop();
+      wake.current = null;
+      setWakeArmed(false);
+      return;
+    }
+    if (
+      talkActive.current ||
+      status !== 'idle' ||
+      voice !== 'idle' ||
+      !service?.realtime?.available
+    )
+      return;
+    const listener = new WakeWordListener(
+      () => {
+        wake.current = null;
+        setWakeArmed(false);
+        void startTalk();
+      },
+      (message) => {
+        wake.current = null;
+        setWakeArmed(false);
+        setTalkNotice(message);
+      },
+    );
+    wake.current = listener;
+    try {
+      await listener.start();
+      if (wake.current === listener) {
+        setWakeArmed(true);
+        setOpen(false);
+      }
+    } catch (error) {
+      if (wake.current !== listener) return;
+      listener.stop();
+      wake.current = null;
+      setWakeArmed(false);
+      setTalkNotice((error as Error).message);
+    }
+  }
+
   /** Shared files open straight from a citation, through the same private download the Shared files list uses. */
+  async function previewSource(id: string, target: string | null) {
+    const epoch = operation.current;
+    if (!target) return;
+    try {
+      const file = unwrap(
+        await db()
+          .from('portal_files')
+          .select('name,path,mime_type')
+          .eq('id', id)
+          .eq('workspace_id', target)
+          .single(),
+      );
+      const blob = unwrap(await db().storage.from('portal-private').download(file.path));
+      if (epoch !== operation.current) return;
+      portalSelection.current = { workspace: target, file_id: id };
+      if (
+        !['application/pdf', 'text/plain'].includes(file.mime_type) &&
+        !file.mime_type.startsWith('image/')
+      ) {
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = file.name;
+        link.click();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+        return;
+      }
+      setSourcePreview({ name: file.name, blob: new Blob([blob], { type: file.mime_type }) });
+    } catch {
+      setNotice('That file could not be opened. Choose it from Shared files or try again.');
+    }
+  }
+
   async function openSource(citation: Citation) {
     try {
       const file = unwrap(
@@ -1327,7 +1481,7 @@ export function Vexbot({
       )}
 
       <AnimatePresence initial={false}>
-        {!open && (talk !== 'off' || talkNotice) && (
+        {!open && (talk !== 'off' || talkNotice || wakeArmed) && (
           <m.aside
             initial={reduced ? false : { opacity: 0, y: 4 }}
             animate={{ opacity: 1, y: 0 }}
@@ -1343,6 +1497,14 @@ export function Vexbot({
                 : undefined
             }
           >
+            {wakeArmed && (
+              <p role="status">
+                Microphone active on this device. Say “{WAKE_PHRASE}”.{' '}
+                <button type="button" onClick={() => void armWake()}>
+                  Stop wake listening
+                </button>
+              </p>
+            )}
             {talk !== 'off' && (
               <p className="vexbot-talk-state" role="status" data-testid="vexbot-talk-state">
                 <span className="vexbot-talk-dot" aria-hidden="true" />
@@ -2018,6 +2180,25 @@ export function Vexbot({
                   Spoken replies
                 </button>
               )}
+              <button
+                type="button"
+                disabled={
+                  !wakeSupported ||
+                  !service?.realtime?.available ||
+                  talk !== 'off' ||
+                  status !== 'idle' ||
+                  voice !== 'idle'
+                }
+                aria-pressed={wakeArmed}
+                onClick={() => void armWake()}
+                title={
+                  wakeSupported
+                    ? 'Uses on-device recognition; stops before Vexbot speaks.'
+                    : 'On-device wake recognition is unavailable. Tap Talk to Vexbot instead.'
+                }
+              >
+                Listen for “{WAKE_PHRASE}”
+              </button>
             </div>
             {admin && (
               <>
@@ -2047,6 +2228,29 @@ export function Vexbot({
           </m.section>
         )}
       </AnimatePresence>
+      <dialog
+        ref={sourceDialog}
+        className="document-preview-dialog"
+        aria-label={sourcePreview ? `Preview ${sourcePreview.name}` : 'Document preview'}
+        onClose={() => setSourcePreview(null)}
+      >
+        <div className="panel-heading">
+          <h2>{sourcePreview?.name}</h2>
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Close document preview"
+            onClick={() => sourceDialog.current?.close()}
+          >
+            <X size={18} />
+          </button>
+        </div>
+        {sourcePreview && (
+          <Suspense fallback={<p role="status">Loading preview…</p>}>
+            <DocumentPreview blob={sourcePreview.blob} name={sourcePreview.name} />
+          </Suspense>
+        )}
+      </dialog>
     </div>
   );
 }

@@ -4,6 +4,7 @@
 import { ANSWER_SCHEMA, systemPrompt, userPrompt } from './prompt.mjs';
 import { events, partialAnswer } from '../../src/vexbot/stream.mjs';
 import { SUMMARY_INSTRUCTIONS, SUMMARY_SCHEMA } from '../insights.mjs';
+import { transcriptionPrompt } from './speech.mjs';
 
 const OPENAI = 'https://api.openai.com/v1';
 
@@ -35,7 +36,7 @@ function openaiProvider(env) {
       if (data.choices?.[0]?.finish_reason !== 'stop') throw new Error('Incomplete summary');
       return JSON.parse(data.choices[0].message.content);
     },
-    async answer({ settings, question, sources, history, onDelta, signal }) {
+    async answer({ settings, question, sources, history, portalContext, onDelta, signal }) {
       const response = await openai(env, '/chat/completions', {
         method: 'POST',
         signal,
@@ -46,7 +47,7 @@ function openaiProvider(env) {
           stream: Boolean(onDelta),
           messages: [
             { role: 'system', content: systemPrompt(settings) },
-            { role: 'user', content: userPrompt({ question, sources, history }) },
+            { role: 'user', content: userPrompt({ question, sources, history, portalContext }) },
           ],
           response_format: { type: 'json_schema', json_schema: { name: 'vexbot_answer', strict: true, schema: ANSWER_SCHEMA } },
         }),
@@ -74,6 +75,8 @@ function openaiProvider(env) {
     async transcribe(audio, mime) {
       const form = new FormData();
       form.append('model', env.VEXBOT_TRANSCRIBE_MODEL);
+      form.append('language', 'en');
+      form.append('prompt', transcriptionPrompt());
       form.append('file', new Blob([audio], { type: mime }), `turn.${mime.includes('webm') ? 'webm' : mime.includes('ogg') ? 'ogg' : mime.includes('wav') ? 'wav' : mime.includes('mpeg') || mime.includes('mp3') ? 'mp3' : 'm4a'}`);
       const response = await openai(env, '/audio/transcriptions', { method: 'POST', body: form });
       return String((await response.json()).text ?? '').trim();
