@@ -49,7 +49,10 @@ test('live voice admission is opt-in and preserves the audited model and voice',
   assert.equal(realtimeReadiness({ OPENAI_API_KEY: 'key', VEXBOT_REALTIME_ENABLED: 'true' }).available, true);
   const config = portalRealtimeSession([{ role: 'user', content: 'Correction: proposed, not completed.' }]);
   assert.equal(config.model, 'gpt-realtime-2.1-mini');
-  assert.equal(config.audio.output.voice, 'marin');
+  assert.equal(config.audio.output.voice, 'cedar');
+  assert.equal(realtimeReadiness({ OPENAI_API_KEY: 'key', VEXBOT_REALTIME_ENABLED: 'true' }).voice, 'cedar');
+  assert.equal(config.audio.input.turn_detection.type, 'semantic_vad');
+  assert.equal(config.audio.input.turn_detection.create_response, false, 'the server owns response creation');
   assert.equal(config.audio.input.turn_detection.interrupt_response, true);
   assert.equal(config.tool_choice.name, 'workspace_knowledge');
   assert.ok(config.instructions.includes('Later corrections'));
@@ -73,7 +76,7 @@ test('recognised turns retrieve directly, skip the query-planning model round an
   assert.match(f.socket.sent.at(-1).response.instructions, /Support is weekdays/);
 });
 
-test('a newer recognised turn supersedes an outstanding lookup without speaking stale evidence', async t => {
+test('a newer recognised turn supersedes an outstanding lookup, carrying the unanswered words without speaking stale evidence', async t => {
   let resolveOld;
   const questions = [];
   const f = await fixture(t, { lookup(question) { questions.push(question); return question === 'Old request' ? new Promise(resolve => { resolveOld = resolve; }) : Promise.resolve({ reply: 'New reply' }); } });
@@ -83,7 +86,7 @@ test('a newer recognised turn supersedes an outstanding lookup without speaking 
     f.socket.event({ type: 'conversation.item.input_audio_transcription.completed', item_id, transcript });
     await tick(); await tick();
   }
-  assert.deepEqual(questions, ['Old request', 'New request']);
+  assert.deepEqual(questions, ['Old request', 'Old request New request']);
   resolveOld({ reply: 'Stale reply' }); await tick(); await tick();
   assert.equal(f.socket.sent.filter(e => e.type === 'response.create').length, 1);
   assert.match(f.socket.sent.at(-1).response.instructions, /New reply/);
@@ -93,7 +96,7 @@ test('SDP exchange uses the server credential, approved config and privacy-prese
   const config = portalRealtimeSession([]);
   const call = await createCall('v=0\r\n', config, 'user', async (url, init) => {
     assert.equal(url, 'https://api.openai.com/v1/realtime/calls');
-    assert.equal(JSON.parse(init.body.get('session')).audio.output.voice, 'marin');
+    assert.equal(JSON.parse(init.body.get('session')).audio.output.voice, 'cedar');
     assert.match(init.headers['OpenAI-Safety-Identifier'], /^[a-f0-9]{64}$/);
     return new Response('answer', { headers: { Location: '/v1/realtime/calls/rtc_test' } });
   });

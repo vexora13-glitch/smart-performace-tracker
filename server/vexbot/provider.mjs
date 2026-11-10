@@ -7,6 +7,11 @@ import { SUMMARY_INSTRUCTIONS, SUMMARY_SCHEMA } from '../insights.mjs';
 import { transcriptionPrompt } from './speech.mjs';
 
 const OPENAI = 'https://api.openai.com/v1';
+// Recorded replies use a separate speech model, which does not offer the live voice (Cedar). Ash is
+// its closest clear, professional voice and is accepted by tts-1; VEXBOT_TTS_VOICE still overrides it.
+export const RECORDED_VOICE = 'ash';
+const RECORDED_VOICE_STYLE =
+  'Speak as a composed, articulate professional: clear, confident and courteous, at a measured pace with crisp articulation and settled sentence endings. No exclamations or sales tone.';
 
 async function openai(env, path, init) {
   const response = await fetch(`${OPENAI}${path}`, {
@@ -85,7 +90,14 @@ function openaiProvider(env) {
       const response = await openai(env, '/audio/speech', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: env.VEXBOT_TTS_MODEL, voice: env.VEXBOT_TTS_VOICE || 'alloy', input: text, response_format: 'mp3' }),
+        body: JSON.stringify({
+          model: env.VEXBOT_TTS_MODEL,
+          voice: env.VEXBOT_TTS_VOICE || RECORDED_VOICE,
+          input: text,
+          response_format: 'mp3',
+          // Only the steerable speech models accept delivery instructions; tts-1 rejects the field.
+          ...(/^gpt-4o/.test(env.VEXBOT_TTS_MODEL) ? { instructions: RECORDED_VOICE_STYLE } : {}),
+        }),
       });
       return { audio: Buffer.from(await response.arrayBuffer()), mime: 'audio/mpeg' };
     },

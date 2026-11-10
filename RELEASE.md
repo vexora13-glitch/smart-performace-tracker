@@ -55,7 +55,7 @@ To add (Preview, encrypted, server-only, never `VITE_`):
 | `VEXBOT_OPENAI_MODEL` | `gpt-4.1-mini` |
 | `VEXBOT_TRANSCRIBE_MODEL` | `gpt-4o-mini-transcribe` |
 | `VEXBOT_TTS_MODEL` | `tts-1` |
-| `VEXBOT_TTS_VOICE` | optional, default `alloy` |
+| `VEXBOT_TTS_VOICE` | optional, default `ash` |
 
 Public build/runtime values passed at deploy time (the shared Preview/Production `VITE_*` entries are from the old project):
 `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, plus runtime `SUPABASE_URL`, all for `ccxkaqbajugimmtsztif`.

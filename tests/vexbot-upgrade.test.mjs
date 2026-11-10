@@ -54,15 +54,14 @@ test('conversational replies can acknowledge without inventing a citation; groun
     false,
   );
 });
-test('reference voice contract retains Marin and requested model without fallback or admitting live calls', () => {
+test('reference voice contract fixes the professional voice, model and turn detection without fallback or admitting live calls', () => {
   const s = referenceRealtimeSession('Only authorised context.');
   assert.equal(s.model, 'gpt-realtime-2.1-mini');
-  assert.equal(s.audio.output.voice, 'marin');
+  assert.equal(s.audio.output.voice, 'cedar');
+  assert.equal(s.audio.input.transcription.model, 'gpt-4o-transcribe');
   assert.deepEqual(s.audio.input.turn_detection, {
-    type: 'server_vad',
-    threshold: 0.5,
-    prefix_padding_ms: 300,
-    silence_duration_ms: 500,
+    type: 'semantic_vad',
+    eagerness: 'medium',
     create_response: true,
     interrupt_response: true,
   });

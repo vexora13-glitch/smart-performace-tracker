@@ -2,6 +2,34 @@
 
 Status: implemented on `portal` in `D:\Projects\smart-performance-tracker`. Hosted activation and human voice-fidelity acceptance remain pending. No commit, push, deployment, website modification or hosted database migration was performed.
 
+## Professional voice and conversation upgrade — 11 November 2026
+
+This section supersedes the Marin / `server_vad` / `gpt-4o-mini-transcribe` details recorded further down, which describe the earlier website-matching configuration and are kept as history. Matching the public website's voice is no longer a goal; the website was not changed.
+
+| Area | Now | Before |
+| --- | --- | --- |
+| Live voice | `cedar`, fixed in `REALTIME_VOICE` (`server/vexbot/realtime.mjs`). The tamper check, readiness status and refusal message all read that constant. Still no automatic alternative voice. | `marin` |
+| Delivery | Composed, articulate, measured pace; answer first; one to three short sentences; figures and dates read aloud naturally | Warm, plain, one or two sentences |
+| Greeting | "Hello, this is VexBot, Vexora's AI assistant. How can I help?" | "Hi, I'm Vexora's AI assistant. What would you like help with?" |
+| Turn detection | `semantic_vad`, eagerness `medium`: ends the turn when the thought is finished rather than on a fixed 500 ms silence | `server_vad`, 500 ms |
+| Live recognition | `gpt-4o-transcribe`. The recognised words drive retrieval, so recognition accuracy is knowledge accuracy | `gpt-4o-mini-transcribe` |
+| Recorded fallback voice | `ash` by default (`tts-1` does not offer `cedar`); `VEXBOT_TTS_VOICE` still overrides. Steerable speech models also receive delivery instructions. Markdown and list markers are removed before synthesis | `alloy` |
+
+Conversation and accuracy changes, shared by text and voice unless noted:
+
+- **Figure grounding** (`validateAnswer`, `unsupportedFigures` in `prompt.mjs`). After citation ids are validated, every amount, percentage, date, quantity of two or more digits, email address and link in an answer must literally appear in the supplied sources, the question or the dialogue. Otherwise the answer is rejected and the existing no-answer reply is used. Equivalent written forms agree (`$18.5k`, `18,500`, "twelve"/`12`). This is deliberately strict: a correct total the model calculated itself is also rejected, and the prompts tell the model to quote figures and not derive them. Number words in an answer ("four thousand") are not checked.
+- **Partial answers.** When sources cover part of a question the assistant answers that part and states what is not covered, instead of declining the whole question.
+- **Reference resolution and fewer clarifying questions.** Prompts require resolving "it"/"that one" from the dialogue and answering when there is one sensible reading.
+- **Follow-up retrieval** (`retrievalQueries`, `isElliptical` in `context.mjs`). A follow-up with no topic of its own ("How much is it?") is searched together with the client's previous turn first.
+- **Direct profile reads** now tolerate greetings, politeness and contractions, and include location. Compound or conditional questions still go through grounding.
+- **Voice: one request over several breaths.** If the client speaks again before any reply was audible, the recognised words are carried forward and answered as one request, and the model is told later words may correct earlier ones. Barge-in on audible speech still starts a new request.
+- **Voice: noise does not drop a question.** An utterance with no recognised words (a cough) re-answers the carried question instead of discarding it.
+- **Voice: pleasantries and "say that again"** are answered without retrieval or a model round. A repeat re-speaks the last fully heard reply (up to 700 characters) with its saved citations.
+
+Verification on 11 November 2026: `npm run typecheck` and `npm run lint` passed. `npm test`: 224 of 225 passed; the one failure, `tests/insights-local.test.mjs`, fails identically on the unmodified checkout in a full run and passes alone. `node scripts/vexbot-realtime-provider-check.mjs --live` completed against the real provider with `cedar`, `semantic_vad` and `gpt-4o-transcribe`: the session was accepted, audio was produced and the call was terminated. A one-word request confirmed `tts-1` accepts `ash` and rejects `cedar`. VexBot Playwright suite: 10 passed, 8 intentional skips, 1 failed and 3 did not run after it; the failing multi-window revocation test (`vexbot.spec.ts:216`) also fails on the unmodified checkout.
+
+Not verified: nobody has listened to the new voice in the portal, and turn-taking with `semantic_vad`, latency with the larger recognition model, and the merged-breath behaviour have not been exercised with a physical microphone. The latency figures below were measured on the earlier configuration.
+
 ## Architecture and session flow
 
 1. Click the robot, then **Start voice conversation**, or use **Talk to Vexbot**. The browser primes playback during the click, obtains microphone permission, creates an `RTCPeerConnection`, adds the microphone track and opens `oai-events`.
@@ -40,7 +68,7 @@ Abrupt infrastructure termination can interrupt supervision before its cleanup r
 
 Existing server-only variables remain: `SUPABASE_URL` (or the existing URL fallback), `SUPABASE_SERVICE_ROLE_KEY`, and `OPENAI_API_KEY`. Existing `VEXBOT_OPENAI_MODEL`, `VEXBOT_TRANSCRIBE_MODEL`, `VEXBOT_TTS_MODEL` and `VEXBOT_TTS_VOICE` continue to govern text/recorded fallback, independently of native live audio.
 
-New switch: `VEXBOT_REALTIME_ENABLED=true`, server only. It defaults off. Do not prefix server secrets/switches with `VITE_`. The native identity is intentionally fixed to the audited model/voice; no environment-driven silent replacement was introduced.
+New switch: `VEXBOT_REALTIME_ENABLED=true`, server only. It defaults off. Do not prefix server secrets/switches with `VITE_`. The native identity is intentionally fixed in code (`REALTIME_MODEL`, `REALTIME_VOICE`); no environment-driven silent replacement was introduced.
 
 After explicit approval for hosted changes:
 

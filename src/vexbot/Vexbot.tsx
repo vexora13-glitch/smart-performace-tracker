@@ -1510,7 +1510,7 @@ export function Vexbot({
                 <span className="vexbot-talk-dot" aria-hidden="true" />
                 {talkMuted ? 'Muted. Unmute to keep talking.' : TALK_TEXT[talk]}
                 <small>
-                  {liveVoice ? ' Live · Marin' : ' Recorded voice · may sound different'}
+                  {liveVoice ? ' Live voice' : ' Recorded voice · may sound different'}
                 </small>
               </p>
             )}

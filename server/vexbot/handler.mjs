@@ -4,8 +4,14 @@
 import { selectHistory, retrievalQueries } from './context.mjs';
 import { transcriptionPrompt } from './speech.mjs';
 import { selectedFile, selectedMessage, sectionNote } from './portal-context.mjs';
-import { directBusinessAnswer, followUpClarification, VOICE_NO_ANSWER } from './direct-answer.mjs';
-import { INTERRUPTED_VOICE_TEXT, realtimeReadiness } from './realtime.mjs';
+import {
+  directBusinessAnswer,
+  followUpClarification,
+  socialReply,
+  VOICE_NO_ANSWER,
+  wantsRepeat,
+} from './direct-answer.mjs';
+import { INTERRUPTED_VOICE_TEXT, realtimeReadiness, spokenText } from './realtime.mjs';
 import { randomUUID } from 'node:crypto';
 import { authenticate, check, database, method, respondError } from '../runtime.mjs';
 import { HttpError, id as uuid, requiredText } from '../validation.mjs';
@@ -440,6 +446,7 @@ async function answer(
           : undefined,
       }),
       sources,
+      { question, history },
     );
     if (ctx.timings) ctx.timings.model = performance.now() - started;
   } catch (error) {
@@ -511,7 +518,8 @@ async function checkAttachments(ctx, workspace, ids) {
 async function synthesise(ctx, text) {
   if (!ctx.provider?.voice) return { speech_error: 'Spoken replies are not available right now.' };
   try {
-    const { audio, mime } = await ctx.provider.speak(text.slice(0, 4000));
+    // Written layout (markdown, list markers) is for the page; the voice reads only the words.
+    const { audio, mime } = await ctx.provider.speak(spokenText(text).slice(0, 4000));
     return { speech: { audio: audio.toString('base64'), mime } };
   } catch (error) {
     console.error(
@@ -1457,11 +1465,51 @@ export async function voiceContext(req, input, db = database()) {
     async lookup(question) {
       const [messages, settings] = await Promise.all([shown(), loadSettings(ctx)]);
       const history = selectHistory(messages);
-      const recent =
-        messages.filter((m) => m.role === 'assistant' && !m.withdrawn).at(-1)?.citations ?? [];
+      const last = messages.filter((m) => m.role === 'assistant' && !m.withdrawn).at(-1);
+      const recent = last?.citations ?? [];
+      const asked = requiredText(question, 'question', 2000);
+      const fallback = followUpClarification(asked) || VOICE_NO_ANSWER;
+      const social = socialReply(asked);
+      if (social) return { reply: social, outcome: 'answered', sources: [], history, fallback };
+      // "Say that again": repeat the last reply that was heard in full, with the evidence it was
+      // saved with. Long written answers are not re-read aloud; those go back through grounding.
+      if (
+        wantsRepeat(asked) &&
+        last?.outcome === 'answered' &&
+        !last.interrupted &&
+        last.content.length <= 700
+      )
+        return {
+          reply: last.content,
+          outcome: 'answered',
+          history,
+          fallback,
+          sources: [
+            ...last.citations.map((c, index) => ({
+              id: `R${index + 1}`,
+              kind: c.kind,
+              document_id: c.document_id ?? null,
+              file_id: c.file_id ?? null,
+              title: c.title,
+              content: c.excerpt ?? '',
+            })),
+            ...(last.uses_profile
+              ? [
+                  {
+                    id: 'P',
+                    kind: 'profile',
+                    document_id: null,
+                    file_id: null,
+                    title: 'Vexora business profile',
+                    content: profileText(settings.business_profile),
+                  },
+                ]
+              : []),
+          ],
+        };
       const result = await plan(ctx, {
         workspace,
-        question: requiredText(question, 'question', 2000),
+        question: asked,
         history,
         settings,
         attachments: [],
@@ -1472,7 +1520,7 @@ export async function voiceContext(req, input, db = database()) {
         ...result,
         notes: [...(result.notes ?? []), sectionNote(ctx.portalContext)].filter(Boolean),
         history,
-        fallback: followUpClarification(question) || VOICE_NO_ANSWER,
+        fallback,
       };
     },
     async userMessage(content, at = new Date().toISOString()) {

@@ -2,6 +2,8 @@
 
 Status: PENDING. A matching voice ID and a successful API connection do not establish audible fidelity.
 
+Note, 11 November 2026: the portal's live voice is now `cedar`, chosen for a clear professional delivery, so the portal and website intentionally sound different. Use this procedure to judge the portal's clarity, pacing, turn-taking and accuracy on its own terms; the website column is a reference for behaviour, not a voice to match.
+
 Use `https://vexoradigital.com` as the reference and the local portal with the reviewed session migration and `VEXBOT_REALTIME_ENABLED=true`. Do not modify the website or deploy either project. Use an authorised synthetic workspace with a short approved project description. A website agent may legitimately lack that private project context; compare delivery separately from knowledge accuracy.
 
 ## Setup
