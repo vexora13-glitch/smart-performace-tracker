@@ -205,6 +205,30 @@ test('deletion revokes access before Storage cleanup and removes Auth only after
   assert.deepEqual(f.calls[0][1], { client_ids: [CLIENT] });
 });
 
+test('missing deletion schema reports a database update without starting cleanup or leaking provider details', async () => {
+  for (const code of ['42P01', '42703', '42883', 'PGRST202', 'PGRST204', 'PGRST205']) {
+    const f = fixture();
+    f.db.rpc = async (name) => {
+      assert.equal(name, 'portal_begin_client_deletion');
+      return { error: { code, message: 'PRIVATE_DATABASE_DETAILS' } };
+    };
+    const response = await f.request('DELETE', { ids: [CLIENT], confirm: 'DELETE' });
+    assert.equal(response.statusCode, 503);
+    assert.match(response.body.error, /Client deletion needs a database update/);
+    assert(!JSON.stringify(response.body).includes('PRIVATE_DATABASE_DETAILS'));
+    assert.deepEqual(f.calls, []);
+  }
+});
+
+test('unexpected deletion failures remain private and do not start cleanup', async () => {
+  const f = fixture();
+  f.db.rpc = async () => ({ error: { code: 'XX000', message: 'PRIVATE_DATABASE_DETAILS' } });
+  const response = await f.request('DELETE', { ids: [CLIENT], confirm: 'DELETE' });
+  assert.equal(response.statusCode, 500);
+  assert.deepEqual(response.body, { error: 'The request could not be completed. Please try again.' });
+  assert.deepEqual(f.calls, []);
+});
+
 test('deletion includes nested, orphaned and paginated objects in both private buckets', async () => {
   const f = fixture();
   f.db.storage.from = (bucket) => ({

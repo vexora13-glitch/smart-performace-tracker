@@ -2019,27 +2019,31 @@ export function Vexbot({
                 </button>
               )}
             </div>
-            {service?.realtime && !service.realtime.available && (
-              <details className="vexbot-disclosure">
-                <summary>Live voice availability</summary>
-                {service.realtime.reason}
-              </details>
+            {admin && (
+              <>
+                {service?.realtime && !service.realtime.available && (
+                  <details className="vexbot-disclosure">
+                    <summary>Live voice availability</summary>
+                    {service.realtime.reason}
+                  </details>
+                )}
+                <p className="vexbot-disclosure">
+                  AI assistant. It answers only from information Vexora has approved and cites its
+                  sources; the team confirms anything important.
+                  {
+                    ' Conversations and available transcripts are saved for authorised Vexora administrators.'
+                  }
+                  {service?.realtime?.available
+                    ? ' Live voice streams microphone audio to OpenAI while connected. You can interrupt, mute or end at any time. Conversations, available transcripts and summaries are saved for authorised Vexora administrators. Microphone recordings are not stored by the portal.'
+                    : voiceOn
+                      ? ' Recorded voice works one question at a time and may use a different voice from the website. Recordings go to the AI provider for transcription and are not stored by the portal.'
+                      : ''}
+                  {service?.provider === 'mock'
+                    ? ' Local test mode: answers come from a mock provider.'
+                    : ''}
+                </p>
+              </>
             )}
-            <p className="vexbot-disclosure">
-              AI assistant. It answers only from information Vexora has approved and cites its
-              sources; the team confirms anything important.
-              {
-                ' Conversations and available transcripts are saved for authorised Vexora administrators.'
-              }
-              {service?.realtime?.available
-                ? ' Live voice streams microphone audio to OpenAI while connected. You can interrupt, mute or end at any time. Conversations, available transcripts and summaries are saved for authorised Vexora administrators. Microphone recordings are not stored by the portal.'
-                : voiceOn
-                  ? ' Recorded voice works one question at a time and may use a different voice from the website. Recordings go to the AI provider for transcription and are not stored by the portal.'
-                  : ''}
-              {service?.provider === 'mock'
-                ? ' Local test mode: answers come from a mock provider.'
-                : ''}
-            </p>
           </m.section>
         )}
       </AnimatePresence>

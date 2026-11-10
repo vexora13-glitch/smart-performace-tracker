@@ -32,6 +32,12 @@ export async function deleteClients(db, input) {
   const ids = [...new Set(input.ids.map((value) => id(value).toLowerCase()))];
   const begun = await db.rpc('portal_begin_client_deletion', { client_ids: ids });
   if (begun.error?.code === '22023') throw new HttpError(400, 'Choose existing client workspaces.');
+  // A locally served portal can point at a hosted database without the deletion migrations.
+  if (['42P01', '42703', '42883', 'PGRST202', 'PGRST204', 'PGRST205'].includes(begun.error?.code))
+    throw new HttpError(
+      503,
+      'Client deletion needs a database update. Contact your portal administrator before trying again.',
+    );
   check(begun);
   const deleted = [];
   const failed = [];
