@@ -45,6 +45,14 @@ export interface PortalFile {
   size_bytes: number;
   created_at: string;
 }
+export interface VideoThumbnail {
+  file_id: string;
+  auto_path: string | null;
+  custom_path: string | null;
+  duration_seconds: number | null;
+  auto_failed_at: string | null;
+  updated_at: string;
+}
 export interface WorkspaceMember {
   workspace_id: string;
   user_id: string;

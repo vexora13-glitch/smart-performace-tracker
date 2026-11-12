@@ -123,16 +123,34 @@ export async function uploadFile(workspace: string, file: File, options: UploadO
     if (!existing.error && !existing.data) await db().storage.from('portal-private').remove([path]);
     throw error;
   }
+  // Videos return their library record so the uploader can generate a thumbnail from the local copy.
+  if (file.type.startsWith('video/')) {
+    const saved = await db().from('portal_files').select('*').eq('path', path).maybeSingle();
+    return (saved.data as PortalFile | null) ?? null;
+  }
   // Start indexing after the authorised library record exists; failure never rolls back a successful upload.
-  if (!file.type.startsWith('video/') && !file.type.startsWith('image/')) {
+  if (!file.type.startsWith('image/')) {
     void db().from('portal_files').select('id').eq('workspace_id', workspace).eq('path', path).maybeSingle().then(({ data }) => {
       if (data) void api('vexbot', { action: 'file_index', workspace_id: workspace, file_id: data.id }).catch(() => {});
     });
   }
+  return null;
 }
 export async function removeFile(file: PortalFile) {
   unwrap(await db().storage.from('portal-private').remove([file.path]));
   unwrap(await db().from('portal_files').delete().eq('id', file.id));
+  // Thumbnail rows cascade with the file; remove only this video's own thumbnail folders.
+  if (file.mime_type.startsWith('video/')) await removeVideoThumbnails(file).catch(() => {});
+}
+/** Remove every thumbnail object stored for one video (list and chapter thumbnails). */
+async function removeVideoThumbnails(file: PortalFile) {
+  const bucket = db().storage.from('portal-private');
+  for (const folder of ['video-thumbnails', 'video-chapters']) {
+    const prefix = `${file.workspace_id}/${folder}/${file.id}`;
+    const { data } = await bucket.list(prefix, { limit: 1000 });
+    const paths = (data ?? []).filter((item) => item.id).map((item) => `${prefix}/${item.name}`);
+    for (let i = 0; i < paths.length; i += 100) await bucket.remove(paths.slice(i, i + 100));
+  }
 }
 export async function fileUrl(file: PortalFile, download = false) {
   return unwrap(

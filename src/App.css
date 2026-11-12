@@ -733,6 +733,282 @@ footer {
   border: 1px solid var(--vx-border);
   border-radius: var(--vx-radius-sm);
 }
+/* Video rows: 16:9 thumbnail in place of the icon, at the same row height as documents. */
+.file-row.video-row {
+  padding: 9px 0;
+}
+.video-thumb-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  flex: none;
+}
+.video-thumb {
+  position: relative;
+  flex: none;
+  width: 112px;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--vx-radius-sm);
+}
+.video-thumb-media {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--vx-border);
+  border-radius: inherit;
+  background: linear-gradient(135deg, #1a2d55 0%, #0d1b30 60%, #241a52 100%);
+  color: var(--vx-accent);
+}
+.video-thumb-media:hover {
+  background: linear-gradient(135deg, #1a2d55 0%, #0d1b30 60%, #241a52 100%);
+  border-color: var(--vx-border-strong);
+}
+.video-thumb-media img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform var(--vx-fast) var(--vx-ease);
+}
+.video-thumb-media:hover img {
+  transform: scale(1.04);
+}
+.video-thumb[data-state='generating'] .video-thumb-media::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 20%, #ffffff14 50%, transparent 80%);
+  animation: vx-thumb-shimmer 1.4s linear infinite;
+}
+@keyframes vx-thumb-shimmer {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+.video-thumb-play {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: #030913cc;
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+}
+.video-thumb-edit {
+  /* Admin-only change-thumbnail icon, directly under the thumbnail. */
+  width: 28px;
+  height: 24px;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border-radius: 6px;
+  border-color: var(--vx-border);
+  background: var(--vx-surface);
+  color: var(--vx-text-2);
+}
+.video-thumb-edit:hover {
+  background: var(--vx-accent-soft);
+  border-color: var(--vx-accent);
+  color: var(--vx-text);
+}
+@media (prefers-reduced-motion: reduce) {
+  .video-thumb-media img { transition: none; }
+  .video-thumb-media:hover img { transform: none; }
+  .video-thumb[data-state='generating'] .video-thumb-media::after { animation: none; }
+}
+dialog.thumbnail-dialog {
+  width: min(720px, calc(100vw - 32px));
+  max-width: none;
+  padding: 24px;
+}
+dialog.thumbnail-dialog .panel-heading {
+  padding-bottom: 12px;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  gap: 12px;
+}
+dialog.thumbnail-dialog .panel-heading > div {
+  min-width: 0;
+}
+dialog .thumbnail-dialog-file {
+  margin: 4px 0 0;
+  color: var(--vx-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.thumbnail-editor {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.thumbnail-editor-current {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--vx-text-2);
+}
+.thumbnail-editor-current img,
+.thumbnail-empty {
+  width: 96px;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--vx-border);
+  background: var(--vx-surface);
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+}
+.thumbnail-editor-current small {
+  color: var(--vx-muted);
+}
+.thumbnail-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.thumbnail-tabs button {
+  background: transparent;
+  border-color: var(--vx-border);
+  color: var(--vx-text-2);
+}
+.thumbnail-tabs button.selected {
+  background: var(--vx-accent-soft);
+  border-color: var(--vx-accent);
+  color: var(--vx-text);
+}
+.thumbnail-frame,
+.thumbnail-stage {
+  display: block;
+  /* Keep the whole editor on screen on short laptop displays. */
+  width: min(100%, calc(min(40dvh, 380px) * 16 / 9));
+  margin-inline: auto;
+  aspect-ratio: 16 / 9;
+  border: 1px solid var(--vx-border);
+  border-radius: var(--vx-radius);
+  background: #030913;
+  overflow: hidden;
+}
+.thumbnail-frame video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.thumbnail-frame > p {
+  margin: 0;
+  padding: 20px;
+}
+.thumbnail-stage {
+  cursor: grab;
+  touch-action: none;
+}
+.thumbnail-stage:active {
+  cursor: grabbing;
+}
+.thumbnail-drop {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  color: var(--vx-muted);
+  text-align: center;
+  padding: 16px;
+}
+dialog .thumbnail-drop p {
+  margin: 0;
+  max-width: 34ch;
+}
+.thumbnail-seek {
+  margin-top: 10px;
+  padding: 0;
+  min-height: 28px;
+  accent-color: var(--vx-accent);
+  border: 0;
+  background: transparent;
+}
+.thumbnail-seek:focus {
+  box-shadow: none;
+}
+.thumbnail-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+.thumbnail-controls .secondary {
+  padding: 8px 12px;
+}
+.thumbnail-time {
+  font-size: 12px;
+  color: var(--vx-text-2);
+  font-variant-numeric: tabular-nums;
+  padding: 0 6px;
+}
+.thumbnail-capture {
+  margin-left: auto;
+}
+.thumbnail-zoom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--vx-text-2);
+  flex: 1 1 160px;
+}
+.thumbnail-zoom input {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  accent-color: var(--vx-accent);
+}
+.thumbnail-zoom input:focus {
+  box-shadow: none;
+}
+.thumbnail-selected {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: var(--vx-text-2);
+}
+.thumbnail-selected img {
+  width: 160px;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: var(--vx-radius-sm);
+  border: 1px solid var(--vx-accent-border);
+}
+dialog p.thumbnail-status {
+  margin: 0;
+  min-height: 1em;
+  font-size: 12px;
+  color: var(--vx-muted);
+}
+dialog .thumbnail-editor .notice {
+  margin: 0;
+}
+.thumbnail-actions {
+  align-items: center;
+}
+.thumbnail-spacer {
+  flex: 1;
+}
 .upload-button {
   position: relative;
   display: flex;
@@ -1573,6 +1849,24 @@ dialog.video-viewer-dialog[open] { display: flex; flex-direction: column; }
   }
   .file-icon {
     padding: 8px;
+  }
+  .video-thumb {
+    width: 96px;
+  }
+  dialog.thumbnail-dialog {
+    width: calc(100vw - 16px);
+    max-height: calc(100dvh - 16px);
+    padding: 16px;
+  }
+  .thumbnail-capture {
+    margin-left: 0;
+    flex: 1 1 100%;
+  }
+  .thumbnail-actions > button {
+    flex: 1 1 auto;
+  }
+  .thumbnail-spacer {
+    display: none;
   }
   .files-list {
     padding: 0 16px 10px;

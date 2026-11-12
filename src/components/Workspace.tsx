@@ -49,10 +49,13 @@ import {
 import type { Client, PortalData, PortalFile, Profile } from '../types/portal';
 import type { WorkspaceSection } from '../App';
 import type { UploadProgress } from '../services/resumable-upload';
+import { useVideoThumbnails } from './video/use-video-thumbnails';
+import { VideoThumbnail } from './video/video-thumbnail';
 
 const ClientVideo = lazy(() => import('./video/client-video'));
 const VideoChapterEditor = lazy(() => import('./video/video-chapter-editor'));
 const DocumentPreview = lazy(() => import('./DocumentPreview'));
+const VideoThumbnailEditor = lazy(() => import('./video/video-thumbnail-editor'));
 
 // Shared files Vexbot can read the text of (the same types server/vexbot/files.mjs extracts).
 const READABLE = new Set([
@@ -132,6 +135,9 @@ export function Workspace({
     () => data.files.filter((row) => row.workspace_id === client.id),
     [data.files, client.id],
   );
+  const thumbnails = useVideoThumbnails(files, admin);
+  const [thumbnailFile, setThumbnailFile] = useState<PortalFile | null>(null);
+  const thumbnailDialog = useRef<HTMLDialogElement>(null);
   const announcements = data.announcements.filter((row) => row.workspace_id === client.id);
   const conversations = data.conversations.filter((row) => row.workspace_id === client.id);
   const unreadCount = conversations.reduce((sum, row) => sum + unread(row.id, data, profile.id), 0);
@@ -238,10 +244,12 @@ export function Workspace({
     setError('');
     setNotice('');
     try {
-      await uploadFile(client.id, file, {
+      const saved = await uploadFile(client.id, file, {
         signal: controller.signal,
         onProgress: setUploadProgress,
       });
+      // Generated in the background from the local file; never blocks the list.
+      if (saved) thumbnails.generateFromUpload(saved, file);
       setPendingUpload(null);
       setUploadProgress(null);
       setNotice('File shared with this client.');
@@ -561,20 +569,32 @@ export function Workspace({
                 <AnimatePresence initial={false}>
                   {visibleFiles.map((file) => (
                     <m.div
-                      className="file-row"
+                      className={`file-row${file.mime_type.startsWith('video/') ? ' video-row' : ''}`}
                       key={file.id}
                       initial={reduced ? false : { opacity: 0, y: 4 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0 }}
                       transition={{ duration: reduced ? 0 : motionTokens.micro }}
                     >
-                      <span className="file-icon">
-                        {file.mime_type.startsWith('video/') ? (
-                          <Play size={21} />
-                        ) : (
+                      {file.mime_type.startsWith('video/') ? (
+                        <VideoThumbnail
+                          name={file.name}
+                          view={thumbnails.view(file)}
+                          onPlay={() => openFile(file)}
+                          onEdit={
+                            admin && ['video/mp4', 'video/webm'].includes(file.mime_type)
+                              ? () => {
+                                  setThumbnailFile(file);
+                                  thumbnailDialog.current?.showModal();
+                                }
+                              : undefined
+                          }
+                        />
+                      ) : (
+                        <span className="file-icon">
                           <FileText size={21} />
-                        )}
-                      </span>
+                        </span>
+                      )}
                       <div className="row-copy">
                         <strong>{file.name}</strong>
                         <small>
@@ -876,6 +896,39 @@ export function Workspace({
                 onClose={() => videoDialog.current?.close()}
               />
             )}
+          </Suspense>
+        )}
+      </dialog>
+      <dialog
+        className="thumbnail-dialog"
+        ref={thumbnailDialog}
+        aria-labelledby="thumbnail-dialog-title"
+        onClose={() => setThumbnailFile(null)}
+      >
+        <div className="panel-heading">
+          <div>
+            <h2 id="thumbnail-dialog-title">Edit thumbnail</h2>
+            <p className="thumbnail-dialog-file">{thumbnailFile?.name}</p>
+          </div>
+          <button
+            className="icon-button"
+            aria-label="Close thumbnail editor"
+            onClick={() => thumbnailDialog.current?.close()}
+          >
+            <X size={21} />
+          </button>
+        </div>
+        {admin && thumbnailFile && (
+          <Suspense fallback={<p role="status">Opening thumbnail editor…</p>}>
+            <VideoThumbnailEditor
+              key={thumbnailFile.id}
+              file={thumbnailFile}
+              view={thumbnails.view(thumbnailFile)}
+              available={thumbnails.available}
+              onSaved={(row) => void thumbnails.apply([row])}
+              onRegenerate={() => thumbnails.regenerate(thumbnailFile)}
+              onClose={() => thumbnailDialog.current?.close()}
+            />
           </Suspense>
         )}
       </dialog>
